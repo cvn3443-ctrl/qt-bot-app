@@ -1,8 +1,28 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Permission.notification.request();
+  
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'qtxsy_bot_service',
+      channelName: 'QTXSY Bot Service',
+      channelDescription: 'Keeps the bot running.',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.repeat(5000),
+      autoRunOnBoot: true,
+      allowWakeLock: true,
+      allowWifiLock: true,
+    ),
+  );
   runApp(const MyApp());
 }
 
@@ -12,115 +32,281 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Engine Test',
+      title: 'QTXSY Bot',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const EngineTestScreen(),
+      home: const QuotexWebScreen(),
     );
   }
 }
 
-class EngineTestScreen extends StatefulWidget {
-  const EngineTestScreen({super.key});
+class QuotexWebScreen extends StatefulWidget {
+  const QuotexWebScreen({super.key});
 
   @override
-  State<EngineTestScreen> createState() => _EngineTestScreenState();
+  State<QuotexWebScreen> createState() => _QuotexWebScreenState();
 }
 
-class _EngineTestScreenState extends State<EngineTestScreen> {
-  WebSocketChannel? _channel;
-  final List<String> _logs = [];
+class _QuotexWebScreenState extends State<QuotexWebScreen> {
+  late WebViewController _controller;
+  bool _isLoading = true;
   
-  // الإيميل والباسورد تبع حساب الديمو يلي بعته
-  final String _email = "inspiring-brown-vjqhth@smail.pw";
-  final String _password = "NOOR@#0000";
+  // إعدادات البوت
+  bool _isDemoMode = true; 
+  double _baseAmount = 1.0;
+  bool _useMartingale = false; 
+  bool _isBotActive = false;
 
-  void _connectAndLogin() {
-    setState(() {
-      _logs.clear();
-      _logs.add("محاولة الاتصال...");
-    });
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (String url) {
+            setState(() => _isLoading = true);
+          },
+          onPageFinished: (String url) {
+            setState(() => _isLoading = false);
+            debugPrint('URL Loaded: $url');
+          },
+          onWebResourceError: (WebResourceError error) {
+            debugPrint('WebView Error: ${error.description}');
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
+  }
 
+  // دالة لسحب الكوكيز (SSID)
+  void _extractCookies() async {
     try {
-      final uri = Uri.parse('wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket');
-      _channel = WebSocketChannel.connect(uri);
-      
-      _channel!.stream.listen(
-        (message) {
-          setState(() {
-            _logs.add("📥 استقبلنا: $message");
-            
-            // إذا استقبلنا "40" يعني متصلين، نبعت بيانات الدخول
-            if (message.toString() == "40") {
-               _logs.add("📤 إرسال بيانات الدخول...");
-               // ملاحظة: صيغة الرسالة الفعلية تعتمد على تحليل حزم Quotex
-               // هذا مجرد نموذج مبدئي للاختبار
-               final payload = jsonEncode({"email": _email, "password": _password});
-               _channel?.sink.add('42["auth",$payload]');
-            }
-            
-            // إذا استقبلنا رد فيه توكن أو خطأ
-            if (message.toString().contains("token") || message.toString().contains("error")) {
-              _logs.add("🎯 الرد على تسجيل الدخول: $message");
-            }
-          });
-        },
-        onError: (error) {
-          setState(() {
-            _logs.add("❌ خطأ: $error");
-          });
-        },
-        onDone: () {
-          setState(() {
-            _logs.add("🔌 انقطع الاتصال.");
-          });
-        },
+      final cookies = await _controller.runJavaScriptReturningResult("document.cookie");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('الكوكيز: $cookies', style: const TextStyle(fontSize: 12)),
+          duration: const Duration(seconds: 10),
+        ),
       );
+      debugPrint("COOKIES: $cookies");
     } catch (e) {
-      setState(() {
-        _logs.add("❌ فشل: $e");
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ: $e')),
+      );
     }
+  }
+
+  void _showBotSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                left: 20,
+                right: 20,
+                top: 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'إعدادات التداول',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent),
+                  ),
+                  const Divider(color: Colors.white24),
+                  const SizedBox(height: 10),
+                  
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('نوع الحساب:', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ديمو'),
+                            selected: _isDemoMode,
+                            selectedColor: Colors.tealAccent,
+                            onSelected: (val) => setModalState(() => _isDemoMode = true),
+                          ),
+                          const SizedBox(width: 10),
+                          ChoiceChip(
+                            label: const Text('حقيقي'),
+                            selected: !_isDemoMode,
+                            selectedColor: Colors.redAccent,
+                            onSelected: (val) => setModalState(() => _isDemoMode = false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  Text('المبلغ الأساسي (\$): ${_baseAmount.toStringAsFixed(0)}', style: const TextStyle(fontSize: 16, color: Colors.white)),
+                  Slider(
+                    value: _baseAmount,
+                    min: 1.0,
+                    max: 10.0,
+                    divisions: 9,
+                    label: '\$${_baseAmount.toStringAsFixed(0)}',
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _baseAmount = val),
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  const Text('طريقة إدارة رأس المال:', style: TextStyle(fontSize: 16, color: Colors.white)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: RadioListTile<bool>(
+                          title: const Text('مبلغ ثابت', style: TextStyle(color: Colors.white, fontSize: 14)),
+                          value: false,
+                          groupValue: _useMartingale,
+                          activeColor: Colors.tealAccent,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) => setModalState(() => _useMartingale = false),
+                        ),
+                      ),
+                      Expanded(
+                        child: RadioListTile<bool>(
+                          title: const Text('مضاعفات', style: TextStyle(color: Colors.white, fontSize: 14)),
+                          value: true,
+                          groupValue: _useMartingale,
+                          activeColor: Colors.tealAccent,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) => setModalState(() => _useMartingale = true),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
+                      label: Text(
+                        _isBotActive ? 'إيقاف البوت' : 'تنشيط البوت',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: () {
+                        setModalState(() {
+                          _isBotActive = !_isBotActive;
+                        });
+                        setState(() {
+                          _isBotActive = _isBotActive;
+                        });
+                        
+                        if (_isBotActive) {
+                          FlutterForegroundTask.startService(
+                            notificationTitle: 'QTXSY Bot Active',
+                            notificationText: 'البوت يعمل الآن على حساب ${_isDemoMode ? "ديمو" : "حقيقي"} بمبلغ ${_baseAmount.toStringAsFixed(0)}\$ ${_useMartingale ? "مع مضاعفات" : "مبلغ ثابت"}.',
+                            callback: startCallback,
+                          );
+                          Navigator.pop(context); 
+                        } else {
+                          FlutterForegroundTask.stopService();
+                          Navigator.pop(context);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اختبار محرك QTXSY', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('منصة Quotex', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.tealAccent,
-                foregroundColor: Colors.black,
-              ),
-              onPressed: _connectAndLogin,
-              child: const Text('اتصال ومحاولة تسجيل دخول'),
-            ),
+        actions: [
+          // زر سحب الكوكيز (للتجربة)
+          IconButton(
+            icon: const Icon(Icons.cookie, color: Colors.orangeAccent),
+            onPressed: _extractCookies,
+            tooltip: 'سحب الكوكيز (SSID)',
           ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _logs.length,
-              itemBuilder: (context, index) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text(
-                    _logs[index],
-                    style: const TextStyle(color: Colors.white70, fontFamily: 'monospace'),
-                  ),
-                );
-              },
-            ),
+          // زر الإعدادات
+          IconButton(
+            icon: Icon(Icons.settings, color: _isBotActive ? Colors.redAccent : Colors.tealAccent),
+            onPressed: _showBotSettings,
           ),
         ],
       ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_isLoading)
+            const Center(
+              child: CircularProgressIndicator(color: Colors.tealAccent),
+            ),
+          
+          if (_isBotActive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                color: Colors.tealAccent.withOpacity(0.9),
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Text(
+                  'البوت يعمل (${_isDemoMode ? "ديمو" : "حقيقي"}) | ${_baseAmount.toStringAsFixed(0)}\$ ${_useMartingale ? "| مضاعفات" : "| ثابت"}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
+  }
+}
+
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(FirstTaskHandler());
+}
+
+class FirstTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    debugPrint('Bot Service Started at $timestamp');
+  }
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {
+    debugPrint('Bot is checking market... $timestamp');
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    debugPrint('Bot Service Destroyed');
   }
 }
