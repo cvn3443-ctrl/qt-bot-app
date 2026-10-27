@@ -52,12 +52,29 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
   }
 
   void _testConnection() async {
+    setState(() {
+        _logs.clear();
+        _logs.add("--- بدء الاختبار ---");
+    });
+
     try {
-      // 1. سحب الكوكيز من المتصفح
+      // 1. محاولة سحب المفتاح من localStorage (الأكثر ترجيحاً)
+      final lsResult = await _controller.runJavaScriptReturningResult("JSON.stringify(localStorage)");
+      _logs.add("📦 localStorage: $lsResult");
+
+      // 2. سحب الكوكيز (كاحتياط)
       final cookies = await _controller.runJavaScriptReturningResult("document.cookie");
       _logs.add("🍪 الكوكيز: $cookies");
 
-      // 2. فتح اتصال WebSocket
+      // --- سنحاول استخدام localStorage أولاً، أو الكوكيز ---
+      String authPayload = "";
+      
+      // إذا كان localStorage يحتوي على شيء، نحاول استخراجه
+      if (lsResult != "{}" && lsResult != "null") {
+          _logs.add("✅ وجدنا بيانات في localStorage");
+          // هنا سنضع منطق استخراج الـ session لاحقاً
+      }
+
       _logs.add("🔌 جاري الاتصال بالسيرفر...");
       final uri = Uri.parse('wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket');
       _channel = WebSocketChannel.connect(uri);
@@ -66,13 +83,11 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
         (message) {
           setState(() {
             _logs.add("📥 استقبلنا: $message");
-            
-            // إذا استقبلنا 40، نرسل رسالة التصريح (هنا بنستخدم الكوكيز)
             if (message.toString() == "40") {
-              _logs.add("📤 إرسال التصريح (SSID)...");
-              // ملاحظة: صيغة الرسالة تعتمد على ما نستخرجه من الكوكيز
-              // هنالك مفتاح اسمه ssid موجود داخل الكوكيز أو رسالة منفصلة
-              _channel?.sink.add('42["auth",{"ssid":"${cookies.toString()}", "demo":1}]');
+              _logs.add("📤 إرسال التصريح...");
+              // نرسل بيانات وهمية الآن، فقط لاختبار أن الاتصال يعمل
+              // السيرفر سيرفضها لأنه لا يوجد ssid حقيقي
+              _channel?.sink.add('42["auth",{"ssid":"test"}]');
             }
           });
         },
@@ -94,6 +109,12 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
           IconButton(
             icon: const Icon(Icons.play_arrow, color: Colors.tealAccent),
             onPressed: _testConnection,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings, color: Colors.tealAccent), // إعادة زر الإعدادات
+            onPressed: () {
+                // يمكننا إضافة الإعدادات هنا لاحقاً
+            },
           ),
         ],
       ),
