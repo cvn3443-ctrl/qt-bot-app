@@ -67,14 +67,15 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
           },
           onPageFinished: (String url) {
             setState(() => _isLoading = false);
-            debugPrint('URL: $url');
+            debugPrint('URL Loaded: $url');
           },
           onWebResourceError: (WebResourceError error) {
             debugPrint('WebView Error: ${error.description}');
           },
         ),
       )
-      ..loadRequest(Uri.parse('https://qxbroker.com/en/sign-in'));
+      // الرابط الجديد يلي بعتو المستخدم
+      ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
   @override
@@ -87,9 +88,9 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.tealAccent),
             onPressed: () {
-              // هنا مستقبلاً رح نحط إعدادات البوت
+              // مستقبلاً: إعدادات البوت
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('قريباً: إعدادات البوت')),
+                const SnackBar(content: Text('قريباً: إعدادات البوت والتحكم')),
               );
             },
           ),
@@ -99,7 +100,9 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
         children: [
           WebViewWidget(controller: _controller),
           if (_isLoading)
-            const Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
+            const Center(
+              child: CircularProgressIndicator(color: Colors.tealAccent),
+            ),
         ],
       ),
     );
