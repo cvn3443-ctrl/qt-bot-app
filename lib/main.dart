@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
   runApp(const MyApp());
@@ -32,7 +30,6 @@ class QuotexWebScreen extends StatefulWidget {
 
 class _QuotexWebScreenState extends State<QuotexWebScreen> {
   late WebViewController _controller;
-  WebSocketChannel? _channel;
   final List<String> _logs = [];
   bool _isLoading = true;
 
@@ -51,49 +48,18 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _testConnection() async {
+  void _extractLocalStorage() async {
     setState(() {
-        _logs.clear();
-        _logs.add("--- بدء الاختبار ---");
+      _logs.clear();
+      _logs.add("--- جاري فحص الذاكرة المخفية ---");
     });
 
     try {
-      // 1. محاولة سحب المفتاح من localStorage (الأكثر ترجيحاً)
+      // سحب كل شي موجود في الـ localStorage
       final lsResult = await _controller.runJavaScriptReturningResult("JSON.stringify(localStorage)");
-      _logs.add("📦 localStorage: $lsResult");
+      _logs.add("المحتوى الكامل لـ localStorage:");
+      _logs.add(lsResult.toString());
 
-      // 2. سحب الكوكيز (كاحتياط)
-      final cookies = await _controller.runJavaScriptReturningResult("document.cookie");
-      _logs.add("🍪 الكوكيز: $cookies");
-
-      // --- سنحاول استخدام localStorage أولاً، أو الكوكيز ---
-      String authPayload = "";
-      
-      // إذا كان localStorage يحتوي على شيء، نحاول استخراجه
-      if (lsResult != "{}" && lsResult != "null") {
-          _logs.add("✅ وجدنا بيانات في localStorage");
-          // هنا سنضع منطق استخراج الـ session لاحقاً
-      }
-
-      _logs.add("🔌 جاري الاتصال بالسيرفر...");
-      final uri = Uri.parse('wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket');
-      _channel = WebSocketChannel.connect(uri);
-
-      _channel!.stream.listen(
-        (message) {
-          setState(() {
-            _logs.add("📥 استقبلنا: $message");
-            if (message.toString() == "40") {
-              _logs.add("📤 إرسال التصريح...");
-              // نرسل بيانات وهمية الآن، فقط لاختبار أن الاتصال يعمل
-              // السيرفر سيرفضها لأنه لا يوجد ssid حقيقي
-              _channel?.sink.add('42["auth",{"ssid":"test"}]');
-            }
-          });
-        },
-        onError: (error) => setState(() => _logs.add("❌ خطأ: $error")),
-        onDone: () => setState(() => _logs.add("🔌 انقطع الاتصال.")),
-      );
     } catch (e) {
       setState(() => _logs.add("❌ فشل: $e"));
     }
@@ -103,18 +69,12 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اختبار المحرك المتقدم', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('فحص الذاكرة (localStorage)', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
           IconButton(
             icon: const Icon(Icons.play_arrow, color: Colors.tealAccent),
-            onPressed: _testConnection,
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.tealAccent), // إعادة زر الإعدادات
-            onPressed: () {
-                // يمكننا إضافة الإعدادات هنا لاحقاً
-            },
+            onPressed: _extractLocalStorage,
           ),
         ],
       ),
