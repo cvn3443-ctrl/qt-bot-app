@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // طلب صلاحية الإشعارات
   await Permission.notification.request();
 
   FlutterForegroundTask.init(
@@ -67,7 +67,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ==========================================
-// شاشة تسجيل الدخول
+// شاشة تسجيل الدخول الحقيقية
 // ==========================================
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -80,29 +80,64 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
+  String _status = '';
 
   void _login() async {
-    setState(() => _isLoading = true);
-    
-    // هون رح نبرمج الاتصال الحقيقي بـ Quotex لاحقاً
-    // حالياً، رح نتأكد إنه الزر عم بيشتغل وبياخد البيانات
-    await Future.delayed(const Duration(seconds: 2)); 
-    
-    if (mounted) {
-      setState(() => _isLoading = false);
-      
-      // عرض تنبيه بالبيانات يلي دخلها المستخدم (للتأكد بس)
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('محاولة دخول بـ: ${_emailController.text}'),
-          backgroundColor: Colors.tealAccent,
-        ),
-      );
+    setState(() {
+      _isLoading = true;
+      _status = 'جاري الاتصال بـ Quotex...';
+    });
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const DashboardScreen()),
-      );
+    try {
+      // هنا نفتح المتصفح المخفي
+      final controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(const Color(0x00000000))
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (String url) async {
+              if (url.contains('qxbroker.com') || url.contains('quotex.io')) {
+                // حقن جافا سكربت لاستخراج بيانات الجلسة (SSID)
+                // ملاحظة: هذا الجزء يحتاج تعديل حسب صفحة Quotex الحالية
+                final result = await controller.runJavaScriptReturningResult(
+                  "JSON.stringify(document.cookie)"
+                );
+                if (mounted) {
+                  setState(() {
+                    _status = 'تم الاتصال! الكوكيز: ${result.toString().substring(0, 20)}...';
+                  });
+                  await Future.delayed(const Duration(seconds: 2));
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const DashboardScreen()),
+                  );
+                }
+              }
+            },
+          ),
+        );
+
+      // فتح صفحة تسجيل الدخول
+      await controller.loadRequest(Uri.parse('https://qxbroker.com/en/sign-in'));
+      
+      // محاكاة إدخال البيانات (هذا يحتاج تعديل ليتناسب مع الحقول الحقيقية)
+      await Future.delayed(const Duration(seconds: 3));
+      await controller.runJavaScript("""
+        document.querySelector('input[name="email"]').value = '${_emailController.text}';
+        document.querySelector('input[name="password"]').value = '${_passwordController.text}';
+        document.querySelector('button[type="submit"]').click();
+      """);
+
+      // انتظار النتيجة
+      await Future.delayed(const Duration(seconds: 5));
+
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _status = 'خطأ: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -142,7 +177,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 style: const TextStyle(color: Colors.white),
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 30),
+              if (_status.isNotEmpty)
+                Text(
+                  _status,
+                  style: const TextStyle(color: Colors.tealAccent, fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+              const SizedBox(height: 30),
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -166,7 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // ==========================================
-// الشاشة الرئيسية (بعد تسجيل الدخول)
+// الشاشة الرئيسية (لوحة التحكم)
 // ==========================================
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -192,6 +234,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const Text(
                 'تم تسجيل الدخول بنجاح!',
                 style: TextStyle(fontSize: 22, color: Colors.white),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'الرصيد: جاري التحميل...',
+                style: TextStyle(fontSize: 18, color: Colors.grey),
               ),
               const SizedBox(height: 40),
               ElevatedButton.icon(
