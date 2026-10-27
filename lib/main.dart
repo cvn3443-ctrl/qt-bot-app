@@ -5,7 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // طلب صلاحية الإشعارات (مهم جداً لأندرويد 13+)
+  // طلب صلاحية الإشعارات
   await Permission.notification.request();
 
   FlutterForegroundTask.init(
@@ -13,8 +13,8 @@ void main() async {
       channelId: 'qtxsy_bot_service',
       channelName: 'QTXSY Bot Service',
       channelDescription: 'Keeps the trading bot running in the background.',
-      channelImportance: NotificationChannelImportance.HIGH,
-      priority: NotificationPriority.HIGH,
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
     ),
     iosNotificationOptions: const IOSNotificationOptions(),
     foregroundTaskOptions: ForegroundTaskOptions(
@@ -83,11 +83,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _login() async {
     setState(() => _isLoading = true);
+    
     // هون رح نبرمج الاتصال الحقيقي بـ Quotex لاحقاً
+    // حالياً، رح نتأكد إنه الزر عم بيشتغل وبياخد البيانات
     await Future.delayed(const Duration(seconds: 2)); 
     
     if (mounted) {
       setState(() => _isLoading = false);
+      
+      // عرض تنبيه بالبيانات يلي دخلها المستخدم (للتأكد بس)
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('محاولة دخول بـ: ${_emailController.text}'),
+          backgroundColor: Colors.tealAccent,
+        ),
+      );
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const DashboardScreen()),
