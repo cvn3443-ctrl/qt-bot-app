@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,48 +80,51 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
   String _status = '';
+  
+  // عرفنا الكونترولر هون عشان يكون متاح للكل
+  late WebViewController _webViewController;
+
+  @override
+  void initState() {
+    super.initState();
+    // تهيئة المتصفح المخفي
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0x00000000))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (String url) async {
+            if (url.contains('qxbroker.com') || url.contains('quotex.io')) {
+              // حقن جافا سكربت لاستخراج بيانات الجلسة (SSID) أو الكوكيز
+              final result = await _webViewController.runJavaScriptReturningResult(
+                "JSON.stringify(document.cookie)"
+              );
+              debugPrint("Cookies: $result");
+            }
+          },
+        ),
+      );
+  }
 
   void _login() async {
     setState(() {
       _isLoading = true;
-      _status = 'جاري الاتصال بـ Quotex...';
+      _status = 'جاري فتح صفحة تسجيل الدخول...';
     });
 
     try {
-      // هنا نفتح المتصفح المخفي
-      final controller = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
-        ..setBackgroundColor(const Color(0x00000000))
-        ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (String url) async {
-              if (url.contains('qxbroker.com') || url.contains('quotex.io')) {
-                // حقن جافا سكربت لاستخراج بيانات الجلسة (SSID)
-                // ملاحظة: هذا الجزء يحتاج تعديل حسب صفحة Quotex الحالية
-                final result = await controller.runJavaScriptReturningResult(
-                  "JSON.stringify(document.cookie)"
-                );
-                if (mounted) {
-                  setState(() {
-                    _status = 'تم الاتصال! الكوكيز: ${result.toString().substring(0, 20)}...';
-                  });
-                  await Future.delayed(const Duration(seconds: 2));
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const DashboardScreen()),
-                  );
-                }
-              }
-            },
-          ),
-        );
-
       // فتح صفحة تسجيل الدخول
-      await controller.loadRequest(Uri.parse('https://qxbroker.com/en/sign-in'));
+      await _webViewController.loadRequest(Uri.parse('https://qxbroker.com/en/sign-in'));
       
-      // محاكاة إدخال البيانات (هذا يحتاج تعديل ليتناسب مع الحقول الحقيقية)
+      // انتظار تحميل الصفحة
       await Future.delayed(const Duration(seconds: 3));
-      await controller.runJavaScript("""
+      
+      setState(() {
+        _status = 'جاري إدخال البيانات...';
+      });
+
+      // محاكاة إدخال البيانات (هذا الجزء يحتاج تعديل حسب الحقول الحقيقية)
+      await _webViewController.runJavaScript("""
         document.querySelector('input[name="email"]').value = '${_emailController.text}';
         document.querySelector('input[name="password"]').value = '${_passwordController.text}';
         document.querySelector('button[type="submit"]').click();
@@ -130,6 +132,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // انتظار النتيجة
       await Future.delayed(const Duration(seconds: 5));
+
+      if (mounted) {
+        setState(() {
+          _status = 'تم الاتصال!';
+          _isLoading = false;
+        });
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const DashboardScreen()),
+        );
+      }
 
     } catch (e) {
       if (mounted) {
