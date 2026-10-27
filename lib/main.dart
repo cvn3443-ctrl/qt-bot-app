@@ -11,7 +11,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Inspector',
+      title: 'QTXSY Clicker Test',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
@@ -48,28 +48,33 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _inspectButtons() async {
+  // دالة بتدور على زر الشراء أو البيع وتدوس عليه
+  void _clickTradeButton(String textToClick) async {
     setState(() {
       _logs.clear();
-      _logs.add("--- جاري فحص أزرار الصفحة ---");
+      _logs.add("--- محاولة الضغط على زر: $textToClick ---");
     });
 
     try {
-      // تعديل: استبدلنا ${} بعلامات + عشان الـ Dart ما يدخل بالجافا سكربت
+      // سكريبت بيدور على العناصر ويحاول يلاقي زر فيه النص المطلوب
       final result = await _controller.runJavaScriptReturningResult("""
         (function() {
-          let buttons = document.querySelectorAll('button, div[role="button"], a.button');
-          let output = [];
-          buttons.forEach(function(btn, index) {
-            if (index < 20) {
-              let text = btn.innerText.trim();
-              let cls = btn.className;
-              if (text !== "") {
-                output.push("زر: " + text + " | كلاس: " + cls);
+          let found = false;
+          // ندور على كل العناصر يلي ممكن تكون أزرار (div أو button)
+          let elements = document.querySelectorAll('button, div[role="button"], div');
+          for (let i = 0; i < elements.length; i++) {
+            let el = elements[i];
+            // إذا كان النص تبع العنصر هو نفسه النص المطلوب
+            if (el.innerText && el.innerText.trim() === "$textToClick") {
+              // نتأكد إنه العنصر ظاهر وقابل للضغط
+              if (el.offsetParent !== null) {
+                el.click(); // نضغط عليه
+                found = true;
+                break; // نوقف بعد أول زر نلاقيه
               }
             }
-          });
-          return JSON.stringify(output);
+          }
+          return found ? "✅ تم الضغط على '$textToClick' بنجاح!" : "❌ لم يتم العثور على زر '$textToClick'.";
         })();
       """);
 
@@ -78,7 +83,7 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
       });
 
     } catch (e) {
-      setState(() => _logs.add("❌ فشل: $e"));
+      setState(() => _logs.add("❌ خطأ: $e"));
     }
   }
 
@@ -86,12 +91,20 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('فحص أزرار المنصة', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اختبار الضغط على الأزرار', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
+          // زر تجربة الشراء
           IconButton(
-            icon: const Icon(Icons.play_arrow, color: Colors.tealAccent),
-            onPressed: _inspectButtons,
+            icon: const Icon(Icons.arrow_upward, color: Colors.greenAccent),
+            tooltip: 'تجربة زر الشراء',
+            onPressed: () => _clickTradeButton('شراء'),
+          ),
+          // زر تجربة البيع
+          IconButton(
+            icon: const Icon(Icons.arrow_downward, color: Colors.redAccent),
+            tooltip: 'تجربة زر البيع',
+            onPressed: () => _clickTradeButton('بيع'),
           ),
         ],
       ),
