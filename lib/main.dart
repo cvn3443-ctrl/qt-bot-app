@@ -48,7 +48,6 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  // هون رح نحقن السكريبت عشان نفحص الأزرار
   void _inspectButtons() async {
     setState(() {
       _logs.clear();
@@ -56,17 +55,17 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
     });
 
     try {
-      // سكريبت بيدور على كل الأزرار ويطبع الكلاس تبعها
+      // تعديل: استبدلنا ${} بعلامات + عشان الـ Dart ما يدخل بالجافا سكربت
       final result = await _controller.runJavaScriptReturningResult("""
         (function() {
           let buttons = document.querySelectorAll('button, div[role="button"], a.button');
           let output = [];
-          buttons.forEach((btn, index) => {
-            if (index < 15) { // نطبع أول 15 زر بس عشان ما نغرق الشاشة
+          buttons.forEach(function(btn, index) {
+            if (index < 20) {
               let text = btn.innerText.trim();
               let cls = btn.className;
               if (text !== "") {
-                output.push(`زر: ${text} | كلاس: ${cls}`);
+                output.push("زر: " + text + " | كلاس: " + cls);
               }
             }
           });
