@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Engine',
+      title: 'QTXSY Inspector',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexWebScreen(),
+      home: const QuotexInspectorScreen(),
     );
   }
 }
 
-class QuotexWebScreen extends StatefulWidget {
-  const QuotexWebScreen({super.key});
+class QuotexInspectorScreen extends StatefulWidget {
+  const QuotexInspectorScreen({super.key});
 
   @override
-  State<QuotexWebScreen> createState() => _QuotexWebScreenState();
+  State<QuotexInspectorScreen> createState() => _QuotexInspectorScreenState();
 }
 
-class _QuotexWebScreenState extends State<QuotexWebScreen> {
+class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -48,17 +48,35 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _extractLocalStorage() async {
+  // هون رح نحقن السكريبت عشان نفحص الأزرار
+  void _inspectButtons() async {
     setState(() {
       _logs.clear();
-      _logs.add("--- جاري فحص الذاكرة المخفية ---");
+      _logs.add("--- جاري فحص أزرار الصفحة ---");
     });
 
     try {
-      // سحب كل شي موجود في الـ localStorage
-      final lsResult = await _controller.runJavaScriptReturningResult("JSON.stringify(localStorage)");
-      _logs.add("المحتوى الكامل لـ localStorage:");
-      _logs.add(lsResult.toString());
+      // سكريبت بيدور على كل الأزرار ويطبع الكلاس تبعها
+      final result = await _controller.runJavaScriptReturningResult("""
+        (function() {
+          let buttons = document.querySelectorAll('button, div[role="button"], a.button');
+          let output = [];
+          buttons.forEach((btn, index) => {
+            if (index < 15) { // نطبع أول 15 زر بس عشان ما نغرق الشاشة
+              let text = btn.innerText.trim();
+              let cls = btn.className;
+              if (text !== "") {
+                output.push(`زر: ${text} | كلاس: ${cls}`);
+              }
+            }
+          });
+          return JSON.stringify(output);
+        })();
+      """);
+
+      setState(() {
+        _logs.add(result.toString());
+      });
 
     } catch (e) {
       setState(() => _logs.add("❌ فشل: $e"));
@@ -69,12 +87,12 @@ class _QuotexWebScreenState extends State<QuotexWebScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('فحص الذاكرة (localStorage)', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('فحص أزرار المنصة', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
           IconButton(
             icon: const Icon(Icons.play_arrow, color: Colors.tealAccent),
-            onPressed: _extractLocalStorage,
+            onPressed: _inspectButtons,
           ),
         ],
       ),
