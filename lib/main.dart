@@ -1,6 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/status.dart' as status;
 
 void main() {
   runApp(const MyApp());
@@ -12,68 +12,74 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Test',
+      title: 'QTXSY Engine Test',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const SocketTestScreen(),
+      home: const EngineTestScreen(),
     );
   }
 }
 
-class SocketTestScreen extends StatefulWidget {
-  const SocketTestScreen({super.key});
+class EngineTestScreen extends StatefulWidget {
+  const EngineTestScreen({super.key});
 
   @override
-  State<SocketTestScreen> createState() => _SocketTestScreenState();
+  State<EngineTestScreen> createState() => _EngineTestScreenState();
 }
 
-class _SocketTestScreenState extends State<SocketTestScreen> {
+class _EngineTestScreenState extends State<EngineTestScreen> {
   WebSocketChannel? _channel;
   final List<String> _logs = [];
-  String _status = "غير متصل";
+  
+  // الإيميل والباسورد تبع حساب الديمو يلي بعته
+  final String _email = "inspiring-brown-vjqhth@smail.pw";
+  final String _password = "NOOR@#0000";
 
-  void _connect() {
+  void _connectAndLogin() {
     setState(() {
       _logs.clear();
-      _status = "جاري الاتصال...";
-      _logs.add("محاولة الاتصال بـ wss://ws2.quotex.com...");
+      _logs.add("محاولة الاتصال...");
     });
 
     try {
-      // الرابط يلي طلع من ترمكس
       final uri = Uri.parse('wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket');
-      
       _channel = WebSocketChannel.connect(uri);
+      
       _channel!.stream.listen(
         (message) {
           setState(() {
-            _status = "متصل ويستقبل بيانات";
             _logs.add("📥 استقبلنا: $message");
+            
+            // إذا استقبلنا "40" يعني متصلين، نبعت بيانات الدخول
+            if (message.toString() == "40") {
+               _logs.add("📤 إرسال بيانات الدخول...");
+               // ملاحظة: صيغة الرسالة الفعلية تعتمد على تحليل حزم Quotex
+               // هذا مجرد نموذج مبدئي للاختبار
+               final payload = jsonEncode({"email": _email, "password": _password});
+               _channel?.sink.add('42["auth",$payload]');
+            }
+            
+            // إذا استقبلنا رد فيه توكن أو خطأ
+            if (message.toString().contains("token") || message.toString().contains("error")) {
+              _logs.add("🎯 الرد على تسجيل الدخول: $message");
+            }
           });
         },
         onError: (error) {
           setState(() {
-            _status = "خطأ في الاتصال";
             _logs.add("❌ خطأ: $error");
           });
         },
         onDone: () {
           setState(() {
-            _status = "انقطع الاتصال";
-            _logs.add("🔌 تم إغلاق الاتصال.");
+            _logs.add("🔌 انقطع الاتصال.");
           });
         },
       );
-
-      // إرسال رسالة ترحيب (أول رسالة بـ socket.io)
-      _channel!.sink.add("40");
-      _logs.add("📤 أرسلنا: 40");
-
     } catch (e) {
       setState(() {
-        _status = "فشل الاتصال";
         _logs.add("❌ فشل: $e");
       });
     }
@@ -83,27 +89,22 @@ class _SocketTestScreenState extends State<SocketTestScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('تجربة اتصال Quotex', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اختبار محرك QTXSY', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Text(
-              'الحالة: $_status',
-              style: const TextStyle(fontSize: 18, color: Colors.white),
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.tealAccent,
+                foregroundColor: Colors.black,
+              ),
+              onPressed: _connectAndLogin,
+              child: const Text('اتصال ومحاولة تسجيل دخول'),
             ),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.tealAccent,
-              foregroundColor: Colors.black,
-            ),
-            onPressed: _connect,
-            child: const Text('بدء الاتصال التجريبي'),
-          ),
-          const SizedBox(height: 20),
           Expanded(
             child: ListView.builder(
               itemCount: _logs.length,
