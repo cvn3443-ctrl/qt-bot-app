@@ -6,7 +6,6 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/services.dart';
 
-// متغيرات عامة عشان نقدر نوصلها من الخلفية
 final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
 
 void main() async {
@@ -67,12 +66,12 @@ class _MainScreenState extends State<MainScreen> {
   bool _isDemoMode = true;
   bool _showPlatform = true;
 
-  // إعدادات المبلغ
   final TextEditingController _amountController = TextEditingController(text: "1.0");
   bool _useMartingale = false;
   double _currentAmount = 1.0;
 
   Timer? _tradeTimer;
+  bool _isCallTurn = true;
 
   @override
   void initState() {
@@ -88,7 +87,7 @@ class _MainScreenState extends State<MainScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  // دالة تدوس على زر (شراء، بيع، ديمو، حقيقي)
+  // دالة تدوس على أي زر بالنص
   void _clickButton(String text) {
     _controller.runJavaScript("""
       (function() {
@@ -107,10 +106,11 @@ class _MainScreenState extends State<MainScreen> {
     """);
   }
 
-  // دالة تدخل المبلغ وتدوس شراء
+  // إدخال المبلغ والدوس
   void _executeTrade(String direction) {
     String buttonText = direction == "CALL" ? "شراء" : "بيع";
-    // نحط المبلغ في الحقل
+    
+    // ندخل المبلغ في الحقل
     _controller.runJavaScript("""
       (function() {
         let input = document.querySelector('input[type="number"]') || document.querySelector('input[inputmode="decimal"]');
@@ -139,12 +139,11 @@ class _MainScreenState extends State<MainScreen> {
     await _notificationsPlugin.show(0, title, body, platformDetails);
   }
 
-  // تشغيل البوت
   void _startBot() async {
     setState(() => _isBotActive = true);
     _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
     
-    // اختيار ديمو أو حقيقي
+    // اختيار الحساب
     if (_isDemoMode) {
       _clickButton("ديمو");
     } else {
@@ -158,13 +157,12 @@ class _MainScreenState extends State<MainScreen> {
       callback: startCallback,
     );
 
-    // تشغيل المؤقت
+    // تشغيل المؤقت (كل دقيقة)
     _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
-      // نختار اتجاه عشوائي (للتجربة)
-      bool isCall = DateTime.now().second % 2 == 0;
-      _executeTrade(isCall ? "CALL" : "PUT");
+      _executeTrade(_isCallTurn ? "CALL" : "PUT");
+      _isCallTurn = !_isCallTurn;
 
-      // إذا المضاعفة مفعلة، نضاعف المبلغ
+      // المضاعفة
       if (_useMartingale) {
         _currentAmount *= 2.0;
       } else {
@@ -182,6 +180,7 @@ class _MainScreenState extends State<MainScreen> {
   void _showBotSettings() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF1E1E1E),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
