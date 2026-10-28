@@ -1,7 +1,26 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'qtxsy_bot_service',
+      channelName: 'QTXSY Bot Service',
+      channelDescription: 'Keeps the bot running.',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.repeat(5000),
+      autoRunOnBoot: true,
+      allowWakeLock: true,
+      allowWifiLock: true,
+    ),
+  );
   runApp(const MyApp());
 }
 
@@ -11,27 +30,38 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Binary Decoder',
+      title: 'QTXSY Bot',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexBinaryScreen(),
+      home: const MainScreen(),
     );
   }
 }
 
-class QuotexBinaryScreen extends StatefulWidget {
-  const QuotexBinaryScreen({super.key});
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
 
   @override
-  State<QuotexBinaryScreen> createState() => _QuotexBinaryScreenState();
+  State<MainScreen> createState() => _MainScreenState();
 }
 
-class _QuotexBinaryScreenState extends State<QuotexBinaryScreen> {
+class _MainScreenState extends State<MainScreen> {
   late WebViewController _controller;
-  final List<String> _logs = [];
   bool _isLoading = true;
+  bool _isBotActive = false;
+  bool _isDemoMode = true;
+  double _baseAmount = 1.0;
+  bool _useMartingale = false;
+  
+  // المتغير لعرض المنصة أو البوت
+  bool _showPlatform = true; 
+
+  // لتخزين الشموع
+  final List<Map<String, dynamic>> _candles = [];
+  String _currentAsset = "EURUSD";
 
   @override
   void initState() {
@@ -42,13 +72,7 @@ class _QuotexBinaryScreenState extends State<QuotexBinaryScreen> {
       ..addJavaScriptChannel(
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
-          setState(() {
-            String msg = message.message;
-            if (msg.isNotEmpty) {
-              _logs.add("📥 $msg");
-            }
-            if (_logs.length > 30) _logs.removeAt(0);
-          });
+          _processData(message.message);
         },
       )
       ..setNavigationDelegate(
@@ -62,13 +86,12 @@ class _QuotexBinaryScreenState extends State<QuotexBinaryScreen> {
                 var originalWebSocket = window.WebSocket;
                 window.WebSocket = function(url, protocols) {
                   var ws = new originalWebSocket(url, protocols);
-                  ws.binaryType = 'arraybuffer'; // استقبال البيانات الثنائية
-                  
+                  ws.binaryType = 'arraybuffer';
                   ws.addEventListener('message', function(event) {
                     var data = event.data;
                     if (typeof data === 'string') {
-                      if (data.includes('quotes') || data.includes('depth') || data.includes('history')) {
-                         FlutterChannel.postMessage("🔍 نص: " + data);
+                      if (data.includes('quotes') || data.includes('history')) {
+                         FlutterChannel.postMessage("TEXT:" + data);
                       }
                     } else if (data instanceof ArrayBuffer) {
                       var uint8 = new Uint8Array(data);
@@ -76,7 +99,7 @@ class _QuotexBinaryScreenState extends State<QuotexBinaryScreen> {
                       for (var i = 0; i < uint8.length; i++) {
                           str += String.fromCharCode(uint8[i]);
                       }
-                      FlutterChannel.postMessage("📦 باينري: " + str.substring(0, 100));
+                      FlutterChannel.postMessage("BIN:" + str);
                     }
                   });
                   return ws;
@@ -95,39 +118,197 @@ class _QuotexBinaryScreenState extends State<QuotexBinaryScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
+  void _processData(String raw) {
+    if (raw.startsWith("BIN:")) {
+      String jsonStr = raw.substring(4);
+      try {
+        if (jsonStr.contains('"history"')) {
+          final data = jsonDecode(jsonStr);
+          if (data['history'] != null) {
+            setState(() {
+              _currentAsset = data['asset'] ?? 'EURUSD';
+              _candles.clear();
+              for (var c in data['history']) {
+                _candles.add({
+                  'time': c[0],
+                  'price': c[1],
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {
+        // تجاهل
+      }
+    }
+  }
+
+  void _showBotSettings() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ديمو'),
+                            selected: _isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = true),
+                          ),
+                          const SizedBox(width: 10),
+                          ChoiceChip(
+                            label: const Text('حقيقي'),
+                            selected: !_isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('المبلغ (\$):', style: TextStyle(color: Colors.white)),
+                  Slider(
+                    value: _baseAmount,
+                    min: 1.0,
+                    max: 10.0,
+                    divisions: 9,
+                    label: '\$${_baseAmount.toStringAsFixed(0)}',
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _baseAmount = val),
+                  ),
+                  SwitchListTile(
+                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
+                    value: _useMartingale,
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _useMartingale = val),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
+                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
+                      onPressed: () {
+                        setModalState(() => _isBotActive = !_isBotActive);
+                        setState(() => _isBotActive = _isBotActive);
+                        if (_isBotActive) {
+                          FlutterForegroundTask.startService(
+                            notificationTitle: 'QTXSY Bot Active',
+                            notificationText: 'البوت شغال...',
+                            callback: startCallback,
+                          );
+                        } else {
+                          FlutterForegroundTask.stopService();
+                        }
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('استقبال البيانات الثنائية', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 2,
-            child: Stack(
+        actions: [
+          IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(50),
+          child: Container(
+            color: Colors.black,
+            child: Row(
               children: [
-                WebViewWidget(controller: _controller),
-                if (_isLoading) const Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _showPlatform = true),
+                    icon: Icon(Icons.web, color: _showPlatform ? Colors.tealAccent : Colors.grey),
+                    label: Text('المنصة', style: TextStyle(color: _showPlatform ? Colors.tealAccent : Colors.grey)),
+                  ),
+                ),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _showPlatform = false),
+                    icon: Icon(Icons.smart_toy, color: !_showPlatform ? Colors.tealAccent : Colors.grey),
+                    label: Text('البوت', style: TextStyle(color: !_showPlatform ? Colors.tealAccent : Colors.grey)),
+                  ),
+                ),
               ],
             ),
           ),
-          Expanded(
-            flex: 1,
-            child: Container(
+        ),
+      ),
+      body: Stack(
+        children: [
+          // المحتوى (إما المنصة أو البوت)
+          if (_showPlatform)
+            WebViewWidget(controller: _controller)
+          else
+            Container(
               color: Colors.black,
-              child: ListView.builder(
-                itemCount: _logs.length,
-                itemBuilder: (context, index) => Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Text(_logs[index], style: const TextStyle(color: Colors.greenAccent, fontFamily: 'monospace', fontSize: 12)),
-                ),
-              ),
+              child: _candles.isEmpty
+                  ? const Center(child: Text('جاري جمع البيانات...', style: TextStyle(color: Colors.grey)))
+                  : ListView.builder(
+                      itemCount: _candles.length,
+                      itemBuilder: (context, index) {
+                        final c = _candles[index];
+                        return ListTile(
+                          leading: const Icon(Icons.show_chart, color: Colors.tealAccent),
+                          title: Text('الوقت: ${c['time']}', style: const TextStyle(color: Colors.white)),
+                          subtitle: Text('السعر: ${c['price']}', style: const TextStyle(color: Colors.grey)),
+                        );
+                      },
+                    ),
             ),
-          ),
+          
+          if (_isLoading && _showPlatform)
+            const Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
         ],
       ),
     );
   }
+}
+
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(FirstTaskHandler());
+}
+
+class FirstTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {}
 }
