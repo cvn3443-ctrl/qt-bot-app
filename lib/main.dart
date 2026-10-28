@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Decoder',
+      title: 'QTXSY Deep Decoder',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexDecodeScreen(),
+      home: const QuotexDeepScreen(),
     );
   }
 }
 
-class QuotexDecodeScreen extends StatefulWidget {
-  const QuotexDecodeScreen({super.key});
+class QuotexDeepScreen extends StatefulWidget {
+  const QuotexDeepScreen({super.key});
 
   @override
-  State<QuotexDecodeScreen> createState() => _QuotexDecodeScreenState();
+  State<QuotexDeepScreen> createState() => _QuotexDeepScreenState();
 }
 
-class _QuotexDecodeScreenState extends State<QuotexDecodeScreen> {
+class _QuotexDeepScreenState extends State<QuotexDeepScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -44,11 +44,11 @@ class _QuotexDecodeScreenState extends State<QuotexDecodeScreen> {
         onMessageReceived: (JavaScriptMessage message) {
           setState(() {
             String msg = message.message;
-            // إذا كانت الرسالة شمعة، نحاول نفكها
-            if (msg.contains('quotes/stream') || msg.contains('history')) {
-              _logs.add("🔍 رسالة خام: ${msg.substring(0, 50)}...");
+            // نطبع الرسائل الكاملة يلي فيها quotes أو depth
+            if (msg.contains('quotes') || msg.contains('depth') || msg.contains('history')) {
+              _logs.add("🔍 ${msg}");
             } else {
-              _logs.add("📥 $msg");
+              _logs.add("📥 ${msg}");
             }
             if (_logs.length > 30) _logs.removeAt(0);
           });
@@ -92,7 +92,7 @@ class _QuotexDecodeScreenState extends State<QuotexDecodeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('فك تشفير الشموع', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('فك تشفير الشموع (كامل)', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
       ),
       body: Column(
