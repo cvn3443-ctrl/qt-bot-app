@@ -6,18 +6,20 @@ import androidx.webkit.WebViewFeature
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
-import io.flutter.plugins.webviewflutter.WebViewHostApiImpl
-import io.flutter.plugins.webviewflutter.WebViewProxyApi
-import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
 
 class MainActivity: FlutterActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    private val CHANNEL = "com.globalqtx.globalqtx/bridge"
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
         
-        // هذا الجزء لحقن السكريبت مبكراً
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            // رح نحقن السكريبت في التطبيق الرئيسي
+        // قناة تواصل مع Flutter (ممكن نحتاجها لاحقاً)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+            if (call.method == "getPlatformVersion") {
+                result.success("Android ${android.os.Build.VERSION.RELEASE}")
+            } else {
+                result.notImplemented()
+            }
         }
     }
 }
