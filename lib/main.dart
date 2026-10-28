@@ -39,22 +39,20 @@ class _QuotexFetchScreenState extends State<QuotexFetchScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
+      ..addJavaScriptChannel(
+        'FlutterChannel',
+        onMessageReceived: (JavaScriptMessage message) {
+          setState(() {
+            _logs.add("📥 استقبلنا من السيرفر: ${message.message}");
+          });
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) => setState(() => _isLoading = true),
-          onPageFinished: (String url) => setState(() => _isLoading = false),
-          // استقبال الرسائل من الجافا سكربت
+          // دمجنا onPageFinished هون عشان ما يتكرر
           onPageFinished: (String url) {
-             setState(() => _isLoading = false);
-             // نضيف جسر تواصل عشان السكريبت يبعتلنا البيانات
-             _controller.addJavaScriptChannel(
-                'FlutterChannel',
-                onMessageReceived: (JavaScriptMessage message) {
-                  setState(() {
-                    _logs.add("📥 استقبلنا من السيرفر: ${message.message}");
-                  });
-                },
-             );
+            setState(() => _isLoading = false);
           },
         ),
       )
@@ -68,25 +66,21 @@ class _QuotexFetchScreenState extends State<QuotexFetchScreen> {
     });
 
     try {
-      // سكريبت يفتح اتصال وهمي من داخل المتصفح ويطلب الشموع
       await _controller.runJavaScript("""
         (function() {
-          // محاولة الاتصال بالسيرفر الداخلي للمنصة
           let socket = new WebSocket("wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket");
           
           socket.onopen = function(e) {
-              // إرسال طلب الشموع بعد الاتصال
               socket.send('40');
-              setTimeout(() => {
-                  // طلب شموع EURUSD
-                  socket.send('42["loadHistoryPeriod",{"asset":"EURUSD","time":' + Math.floor(Date.now() / 1000) + ',"period":300}]');
+              setTimeout(function() {
+                  let timestamp = Math.floor(Date.now() / 1000);
+                  socket.send('42["loadHistoryPeriod",{"asset":"EURUSD","time":' + timestamp + ',"period":300}]');
               }, 1000);
           };
 
           socket.onmessage = function(event) {
-              // بمجرد وصول الرد، نبعته لـ Flutter
               if (event.data.includes('history')) {
-                  FlutterChannel.postMessage(event.data.substring(0, 500));
+                  FlutterChannel.postMessage(event.data.substring(0, 200));
                   socket.close();
               }
           };
