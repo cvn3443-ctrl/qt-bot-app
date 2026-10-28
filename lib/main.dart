@@ -1,7 +1,6 @@
-import 'dart:collection';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 void main() async {
@@ -50,7 +49,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  InAppWebViewController? _controller;
+  late WebViewController _controller;
   bool _isLoading = true;
   bool _isBotActive = false;
   bool _isDemoMode = true;
@@ -61,38 +60,60 @@ class _MainScreenState extends State<MainScreen> {
   final List<Map<String, dynamic>> _candles = [];
   String _currentAsset = "EURUSD";
 
-  final String _injectScript = """
-    (function() {
-      if (window._ws_intercepted) return;
-      window._ws_intercepted = true;
-      var originalWebSocket = window.WebSocket;
-      window.WebSocket = function(url, protocols) {
-        var ws = new originalWebSocket(url, protocols);
-        ws.binaryType = 'arraybuffer';
-        ws.addEventListener('message', function(event) {
-          var data = event.data;
-          if (typeof data === 'string') {
-            if (data.includes('quotes') || data.includes('history')) {
-               window.flutter_inappwebview.callHandler('FlutterChannel', "TEXT:" + data);
-            }
-          } else if (data instanceof ArrayBuffer) {
-            var uint8 = new Uint8Array(data);
-            var str = "";
-            for (var i = 0; i < uint8.length; i++) {
-                str += String.fromCharCode(uint8[i]);
-            }
-            window.flutter_inappwebview.callHandler('FlutterChannel', "BIN:" + str);
-          }
-        });
-        return ws;
-      };
-      window.WebSocket.prototype = originalWebSocket.prototype;
-      window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-      window.WebSocket.OPEN = originalWebSocket.OPEN;
-      window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-      window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-    })();
-  """;
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
+      ..addJavaScriptChannel(
+        'FlutterChannel',
+        onMessageReceived: (JavaScriptMessage message) {
+          _processData(message.message);
+        },
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (String url) {
+            setState(() => _isLoading = true);
+            _controller.runJavaScript("""
+              (function() {
+                if (window._ws_intercepted) return;
+                window._ws_intercepted = true;
+                var originalWebSocket = window.WebSocket;
+                window.WebSocket = function(url, protocols) {
+                  var ws = new originalWebSocket(url, protocols);
+                  ws.binaryType = 'arraybuffer';
+                  ws.addEventListener('message', function(event) {
+                    var data = event.data;
+                    if (typeof data === 'string') {
+                      if (data.includes('quotes') || data.includes('history')) {
+                         FlutterChannel.postMessage("TEXT:" + data);
+                      }
+                    } else if (data instanceof ArrayBuffer) {
+                      var uint8 = new Uint8Array(data);
+                      var str = "";
+                      for (var i = 0; i < uint8.length; i++) {
+                          str += String.fromCharCode(uint8[i]);
+                      }
+                      FlutterChannel.postMessage("BIN:" + str);
+                    }
+                  });
+                  return ws;
+                };
+                window.WebSocket.prototype = originalWebSocket.prototype;
+                window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+                window.WebSocket.OPEN = originalWebSocket.OPEN;
+                window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+                window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+              })();
+            """);
+          },
+          onPageFinished: (String url) => setState(() => _isLoading = false),
+        ),
+      )
+      ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
+  }
 
   void _processData(String raw) {
     if (raw.startsWith("BIN:")) {
@@ -118,7 +139,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _refreshPage() {
-    _controller?.reload();
+    _controller.reload();
     setState(() {
       _candles.clear();
       _isLoading = true;
@@ -254,31 +275,7 @@ class _MainScreenState extends State<MainScreen> {
       body: Stack(
         children: [
           if (_showPlatform)
-            InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri('https://quotex.com/ar/demo-trade')),
-              initialSettings: InAppWebViewSettings(
-                useHybridComposition: false, // حل مشكلة الشاشة السوداء
-              ),
-              initialUserScripts: UnmodifiableListView([
-                UserScript(
-                  source: _injectScript,
-                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-                ),
-              ]),
-              onWebViewCreated: (controller) {
-                _controller = controller;
-                controller.addJavaScriptHandler(
-                  handlerName: 'FlutterChannel',
-                  callback: (args) {
-                    if (args.isNotEmpty) {
-                      _processData(args[0].toString());
-                    }
-                  },
-                );
-              },
-              onLoadStart: (controller, url) => setState(() => _isLoading = true),
-              onLoadStop: (controller, url) => setState(() => _isLoading = false),
-            )
+            WebViewWidget(controller: _controller)
           else
             Container(
               color: Colors.black,
