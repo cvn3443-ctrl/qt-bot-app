@@ -41,13 +41,20 @@ class _MainScreenState extends State<MainScreen> {
   bool _isDemoMode = true;
   bool _showPlatform = true;
 
-  // إعدادات المبلغ والمضاعفة
   final TextEditingController _amountController = TextEditingController(text: "1.0");
   bool _useMartingale = false;
   double _currentAmount = 1.0;
   
   Timer? _tradeTimer;
   bool _isCallTurn = true;
+
+  // قائمة الأزواج العشرين
+  final List<String> _targetAssets = [
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
+    "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
+    "CHFJPY_otc", "USDCAD_otc", "EURJPY_otc", "AUDCAD_otc", "EURAUD_otc",
+    "AUDUSD_otc", "GBPUSD_otc", "EURUSD_otc", "NZDUSD_otc", "GBPJPY_otc"
+  ];
 
   @override
   void initState() {
@@ -64,7 +71,6 @@ class _MainScreenState extends State<MainScreen> {
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
 
-    // إعدادات الخلفية (تشتغل بعد ما تفتح الشاشة)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupBackgroundStuff();
     });
@@ -90,7 +96,6 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // دالة الدوس على أي زر
   void _clickButton(String text) {
     _controller.runJavaScript("""
       (function() {
@@ -109,7 +114,6 @@ class _MainScreenState extends State<MainScreen> {
     """);
   }
 
-  // إدخال المبلغ والدوس
   void _executeTrade(String direction) {
     if (!_isBotActive) return;
     String buttonText = direction == "CALL" ? "شراء" : "بيع";
@@ -174,16 +178,15 @@ class _MainScreenState extends State<MainScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-                left: 20, right: 20, top: 20,
-              ),
+            return Container(
+              padding: const EdgeInsets.all(20),
+              height: MediaQuery.of(context).size.height * 0.7, // عشان يظهر كل شي
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
                   const Divider(color: Colors.white24),
+                  
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -206,6 +209,7 @@ class _MainScreenState extends State<MainScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
+                  
                   TextField(
                     controller: _amountController,
                     keyboardType: TextInputType.number,
@@ -221,7 +225,24 @@ class _MainScreenState extends State<MainScreen> {
                     activeColor: Colors.tealAccent,
                     onChanged: (val) => setModalState(() => _useMartingale = val),
                   ),
-                  const SizedBox(height: 20),
+                  const Divider(color: Colors.white24),
+                  const Text('الأزواج المستهدفة:', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                  const SizedBox(height: 10),
+                  
+                  // قائمة الأزواج
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _targetAssets.length,
+                      itemBuilder: (context, index) {
+                        return ListTile(
+                          leading: const Icon(Icons.currency_exchange, color: Colors.tealAccent, size: 20),
+                          title: Text(_targetAssets[index], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  
                   SizedBox(
                     width: double.infinity,
                     height: 50,
