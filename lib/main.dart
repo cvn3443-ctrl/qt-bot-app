@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -60,7 +59,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  late WebViewController _controller;
+  WebViewController? _controller; // خليها nullable عشان ما تسبب مشاكل
   bool _isLoading = true;
   bool _isBotActive = false;
   bool _isDemoMode = true;
@@ -76,20 +75,23 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    // تهيئة المتصفح
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (String url) => setState(() => _isLoading = false),
+          onPageFinished: (String url) {
+            setState(() => _isLoading = false);
+          },
         ),
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  // دالة تدوس على أي زر بالنص
   void _clickButton(String text) {
-    _controller.runJavaScript("""
+    if (_controller == null) return;
+    _controller!.runJavaScript("""
       (function() {
         let buttons = document.querySelectorAll('button, div[role="button"], div, span');
         for (let i = 0; i < buttons.length; i++) {
@@ -106,12 +108,11 @@ class _MainScreenState extends State<MainScreen> {
     """);
   }
 
-  // إدخال المبلغ والدوس
   void _executeTrade(String direction) {
+    if (_controller == null) return;
     String buttonText = direction == "CALL" ? "شراء" : "بيع";
     
-    // ندخل المبلغ في الحقل
-    _controller.runJavaScript("""
+    _controller!.runJavaScript("""
       (function() {
         let input = document.querySelector('input[type="number"]') || document.querySelector('input[inputmode="decimal"]');
         if (input) {
@@ -122,10 +123,8 @@ class _MainScreenState extends State<MainScreen> {
       })();
     """);
     
-    // ندوس على الزر
     _clickButton(buttonText);
     
-    // اهتزاز وإشعار
     HapticFeedback.heavyImpact();
     _showNotification("دخول صفقة", "تم الدخول بـ $_currentAmount\$ على $direction");
   }
@@ -143,26 +142,22 @@ class _MainScreenState extends State<MainScreen> {
     setState(() => _isBotActive = true);
     _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
     
-    // اختيار الحساب
     if (_isDemoMode) {
       _clickButton("ديمو");
     } else {
       _clickButton("حقيقي");
     }
 
-    // بدء الخلفية
     await FlutterForegroundTask.startService(
       notificationTitle: 'QTXSY Bot Active',
       notificationText: 'البوت شغال...',
       callback: startCallback,
     );
 
-    // تشغيل المؤقت (كل دقيقة)
     _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
       _executeTrade(_isCallTurn ? "CALL" : "PUT");
       _isCallTurn = !_isCallTurn;
 
-      // المضاعفة
       if (_useMartingale) {
         _currentAmount *= 2.0;
       } else {
@@ -307,9 +302,9 @@ class _MainScreenState extends State<MainScreen> {
       ),
       body: Stack(
         children: [
-          if (_showPlatform)
-            WebViewWidget(controller: _controller)
-          else
+          if (_showPlatform && _controller != null)
+            WebViewWidget(controller: _controller!)
+          else if (!_showPlatform)
             Center(
               child: Text(
                 _isBotActive ? "البوت يعمل... بيدوس كل دقيقة" : "البوت متوقف",
