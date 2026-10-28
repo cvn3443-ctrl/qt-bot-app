@@ -17,7 +17,7 @@ dependencies:
   webview_flutter: ^4.7.0
   webview_flutter_android: ^3.16.0
   webview_flutter_wkwebview: ^3.13.0
-  fl_chart: ^0.66.0
+  audioplayers: ^5.2.1
 
 dev_dependencies:
   flutter_test:
