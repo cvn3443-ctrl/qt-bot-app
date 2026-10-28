@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -11,52 +12,27 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Early Interceptor',
+      title: 'QTXSY Bot',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexEarlyScreen(),
+      home: const QuotexScreen(),
     );
   }
 }
 
-class QuotexEarlyScreen extends StatefulWidget {
-  const QuotexEarlyScreen({super.key});
+class QuotexScreen extends StatefulWidget {
+  const QuotexScreen({super.key});
 
   @override
-  State<QuotexEarlyScreen> createState() => _QuotexEarlyScreenState();
+  State<QuotexScreen> createState() => _QuotexScreenState();
 }
 
-class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
+class _QuotexScreenState extends State<QuotexScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
-
-  // السكريبت يلي رح نحقنه
-  final String _injectScript = """
-    (function() {
-      if (window._ws_intercepted) return;
-      window._ws_intercepted = true;
-      var originalWebSocket = window.WebSocket;
-      window.WebSocket = function(url, protocols) {
-        FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
-        var ws = new originalWebSocket(url, protocols);
-        ws.addEventListener('message', function(event) {
-          var data = event.data;
-          if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
-            FlutterChannel.postMessage("📊 بيانات: " + data.substring(0, 100));
-          }
-        });
-        return ws;
-      };
-      window.WebSocket.prototype = originalWebSocket.prototype;
-      window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-      window.WebSocket.OPEN = originalWebSocket.OPEN;
-      window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-      window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-    })();
-  """;
 
   @override
   void initState() {
@@ -67,20 +43,49 @@ class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
       ..addJavaScriptChannel(
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
-          setState(() {
-            String msg = message.message;
-            if (msg.length > 150) msg = msg.substring(0, 150) + "...";
-            _logs.add("📥 ${msg}");
-            if (_logs.length > 50) _logs.removeAt(0);
-          });
+          String raw = message.message;
+          
+          // إذا كانت الرسالة فيها بيانات شموع
+          if (raw.contains('history/list') || raw.contains('candles')) {
+            setState(() {
+              _logs.add("📊 شمعة جديدة وصلت!");
+            });
+          } else {
+            // نطبع باقي الرسائل للتشخيص
+            setState(() {
+              if (raw.length > 100) raw = raw.substring(0, 100) + "...";
+              _logs.add("📥 $raw");
+            });
+          }
         },
       )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
-            // هون الحيلة: نحقن السكريبت أول ما تبدأ الصفحة تتحمل
-            _controller.runJavaScript(_injectScript);
+            // حقن السكريبت
+            _controller.runJavaScript("""
+              (function() {
+                if (window._ws_intercepted) return;
+                window._ws_intercepted = true;
+                var originalWebSocket = window.WebSocket;
+                window.WebSocket = function(url, protocols) {
+                  var ws = new originalWebSocket(url, protocols);
+                  ws.addEventListener('message', function(event) {
+                    var data = event.data;
+                    if (typeof data === 'string') {
+                      FlutterChannel.postMessage(data);
+                    }
+                  });
+                  return ws;
+                };
+                window.WebSocket.prototype = originalWebSocket.prototype;
+                window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+                window.WebSocket.OPEN = originalWebSocket.OPEN;
+                window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+                window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+              })();
+            """);
           },
           onPageFinished: (String url) {
             setState(() => _isLoading = false);
@@ -94,7 +99,7 @@ class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اعتراض مبكر (Early)', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اعتراض الشموع', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
       ),
       body: Column(
