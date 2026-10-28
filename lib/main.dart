@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:audioplayers/audioplayers.dart'; // مكتبة الصوت
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,23 +55,13 @@ class _MainScreenState extends State<MainScreen> {
   bool _isLoading = true;
   bool _isBotActive = false;
   bool _isDemoMode = true;
-  double _baseAmount = 1.0;
-  bool _useMartingale = false;
   bool _showPlatform = true;
-
-  // قائمة الأزواج العشرين
-  final List<String> _targetAssets = [
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
-    "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-    "CHFJPY_otc", "USDCAD_otc", "EURJPY_otc", "AUDCAD_otc", "EURAUD_otc",
-    "AUDUSD_otc", "GBPUSD_otc", "EURUSD_otc", "NZDUSD_otc", "GBPJPY_otc"
-  ];
   
-  int _currentAssetIndex = 0;
-  final List<Map<String, dynamic>> _tradeHistory = [];
-  String _lastSignal = "";
-  double _currentPrice = 0.0;
-  String _status = "جاهز";
+  Timer? _tradeTimer; // مؤقت الدوس
+  Timer? _soundTimer; // مؤقت الصوت
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  
+  bool _isCallTurn = true; // عشان نبدل بين شراء وبيع
 
   @override
   void initState() {
@@ -77,93 +69,22 @@ class _MainScreenState extends State<MainScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
-      ..addJavaScriptChannel(
-        'FlutterChannel',
-        onMessageReceived: (JavaScriptMessage message) {
-          _processData(message.message);
-        },
-      )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (String url) {
-            setState(() => _isLoading = true);
-            _controller.runJavaScript("""
-              (function() {
-                if (window._ws_intercepted) return;
-                window._ws_intercepted = true;
-                var originalWebSocket = window.WebSocket;
-                window.WebSocket = function(url, protocols) {
-                  var ws = new originalWebSocket(url, protocols);
-                  ws.binaryType = 'arraybuffer';
-                  ws.addEventListener('message', function(event) {
-                    var data = event.data;
-                    if (typeof data === 'string') {
-                      if (data.includes('quotes') || data.includes('history')) {
-                         FlutterChannel.postMessage("TEXT:" + data);
-                      }
-                    } else if (data instanceof ArrayBuffer) {
-                      var uint8 = new Uint8Array(data);
-                      var str = "";
-                      for (var i = 0; i < uint8.length; i++) {
-                          str += String.fromCharCode(uint8[i]);
-                      }
-                      FlutterChannel.postMessage("BIN:" + str);
-                    }
-                  });
-                  return ws;
-                };
-                window.WebSocket.prototype = originalWebSocket.prototype;
-                window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-                window.WebSocket.OPEN = originalWebSocket.OPEN;
-                window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-                window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-              })();
-            """);
-          },
           onPageFinished: (String url) => setState(() => _isLoading = false),
         ),
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _processData(String raw) {
-    if (raw.startsWith("BIN:")) {
-      String jsonStr = raw.substring(4);
-      try {
-        if (jsonStr.contains('"history"')) {
-          final data = jsonDecode(jsonStr);
-          if (data['history'] != null) {
-            setState(() {
-              if (data['history'].isNotEmpty) {
-                _currentPrice = data['history'].last[1];
-                _analyzeMarket();
-              }
-            });
-          }
-        }
-      } catch (e) {}
-    }
-  }
-
-  void _analyzeMarket() {
-    if (!_isBotActive) return;
-    // تحليل بسيط (هنطوره لاحقاً)
-    String signal = "CALL"; 
-    setState(() {
-      _lastSignal = signal;
-      _status = "إشارة: $signal للزوج ${_targetAssets[_currentAssetIndex]}";
-    });
-    _executeTrade(signal);
-  }
-
-  void _executeTrade(String direction) {
-    String buttonText = direction == "CALL" ? "شراء" : "بيع";
+  // دالة الدوس على الزر
+  void _clickButton(String text) {
     _controller.runJavaScript("""
       (function() {
         let buttons = document.querySelectorAll('button, div[role="button"], div');
         for (let i = 0; i < buttons.length; i++) {
           let el = buttons[i];
-          if (el.innerText && el.innerText.trim() === "$buttonText") {
+          if (el.innerText && el.innerText.trim() === "$text") {
             if (el.offsetParent !== null) {
               el.click();
               return "Clicked";
@@ -173,48 +94,49 @@ class _MainScreenState extends State<MainScreen> {
         return "Not Found";
       })();
     """);
-    setState(() {
-      _tradeHistory.add({
-        'time': DateTime.now().toString().substring(11, 19),
-        'asset': _targetAssets[_currentAssetIndex],
-        'direction': direction,
-        'amount': _baseAmount,
-      });
+  }
+
+  // تشغيل البوت (الدوس العشوائي)
+  void _startBot() {
+    setState(() => _isBotActive = true);
+    
+    // صوت خفيف كل 5 دقايق
+    _soundTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      _playSound('soft_click.mp3'); // صوت خفيف
+    });
+
+    // دوسة كل دقيقة (مرة شراء، مرة بيع)
+    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (_isCallTurn) {
+        _clickButton("شراء");
+        _playSound('trade_sound.mp3'); // صوت الدخول
+      } else {
+        _clickButton("بيع");
+        _playSound('trade_sound.mp3');
+      }
+      _isCallTurn = !_isCallTurn; // نبدل للدورة الجاية
     });
   }
 
-  void _startBotCycle() {
-    if (!_isBotActive) return;
-    _currentAssetIndex = (_currentAssetIndex + 1) % _targetAssets.length;
-    String currentAsset = _targetAssets[_currentAssetIndex];
-    setState(() {
-      _status = "جاري تحليل: $currentAsset";
-    });
-    _controller.runJavaScript("""
-      (function() {
-        let elements = document.querySelectorAll('div, span, button, a');
-        for (let i = 0; i < elements.length; i++) {
-          let el = elements[i];
-          let text = el.innerText ? el.innerText.trim() : "";
-          let searchText = "$currentAsset".replace('_otc', '');
-          if (text === searchText || text.includes(searchText)) {
-            el.click();
-            return "Clicked";
-          }
-        }
-        return "Not Found";
-      })();
-    """);
-    Future.delayed(const Duration(seconds: 5), () {
-      if (_isBotActive) _startBotCycle();
-    });
+  // إيقاف البوت
+  void _stopBot() {
+    setState(() => _isBotActive = false);
+    _tradeTimer?.cancel();
+    _soundTimer?.cancel();
   }
 
-  // دالة الإعدادات (اللي رجعت)
+  // تشغيل الصوت
+  Future<void> _playSound(String fileName) async {
+    try {
+      await _audioPlayer.play(AssetSource('sounds/$fileName'));
+    } catch (e) {
+      debugPrint("Audio error: $e");
+    }
+  }
+
   void _showBotSettings() {
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
       backgroundColor: const Color(0xFF1E1E1E),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -222,11 +144,10 @@ class _MainScreenState extends State<MainScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return Container(
+            return Padding(
               padding: const EdgeInsets.all(20.0),
-              height: MediaQuery.of(context).size.height * 0.7, // عشان يظهر كل شي
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
                   const Divider(color: Colors.white24),
@@ -251,39 +172,7 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  const Text('المبلغ (\$):', style: TextStyle(color: Colors.white)),
-                  Slider(
-                    value: _baseAmount,
-                    min: 1.0,
-                    max: 10.0,
-                    divisions: 9,
-                    label: '\$${_baseAmount.toStringAsFixed(0)}',
-                    activeColor: Colors.tealAccent,
-                    onChanged: (val) => setModalState(() => _baseAmount = val),
-                  ),
-                  SwitchListTile(
-                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
-                    value: _useMartingale,
-                    activeColor: Colors.tealAccent,
-                    onChanged: (val) => setModalState(() => _useMartingale = val),
-                  ),
-                  const Divider(color: Colors.white24),
-                  const Text('الأزواج المستهدفة:', style: TextStyle(color: Colors.grey, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  // عرض الأزواج
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _targetAssets.length,
-                      itemBuilder: (context, index) {
-                        return ListTile(
-                          leading: const Icon(Icons.currency_exchange, color: Colors.tealAccent, size: 20),
-                          title: Text(_targetAssets[index], style: const TextStyle(color: Colors.white, fontSize: 14)),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 30),
                   SizedBox(
                     width: double.infinity,
                     height: 50,
@@ -293,12 +182,12 @@ class _MainScreenState extends State<MainScreen> {
                         foregroundColor: Colors.black,
                       ),
                       icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
-                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
+                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت (تجربة)', style: const TextStyle(fontSize: 18)),
                       onPressed: () {
-                        setModalState(() => _isBotActive = !_isBotActive);
-                        setState(() => _isBotActive = _isBotActive);
                         if (_isBotActive) {
-                          _startBotCycle();
+                          _stopBot();
+                        } else {
+                          _startBot();
                         }
                         Navigator.pop(context);
                       },
@@ -314,16 +203,19 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   @override
+  void dispose() {
+    _tradeTimer?.cancel();
+    _soundTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: () {
-            _controller.reload();
-            setState(() { _tradeHistory.clear(); });
-          }),
           IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
         ],
         bottom: PreferredSize(
@@ -356,37 +248,10 @@ class _MainScreenState extends State<MainScreen> {
           if (_showPlatform)
             WebViewWidget(controller: _controller)
           else
-            Container(
-              color: Colors.black,
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    color: _isBotActive ? Colors.tealAccent.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('الزوج: ${_targetAssets[_currentAssetIndex]}', style: const TextStyle(color: Colors.white)),
-                        Text('السعر: ${_currentPrice.toStringAsFixed(5)}', style: const TextStyle(color: Colors.white)),
-                        Text('الإشارة: $_lastSignal', style: TextStyle(color: _lastSignal == "CALL" ? Colors.green : Colors.red)),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _tradeHistory.length,
-                      itemBuilder: (context, index) {
-                        final t = _tradeHistory[index];
-                        return ListTile(
-                          leading: Icon(t['direction'] == 'CALL' ? Icons.arrow_upward : Icons.arrow_downward, 
-                                        color: t['direction'] == 'CALL' ? Colors.green : Colors.red),
-                          title: Text('${t['asset']} - ${t['direction']}', style: const TextStyle(color: Colors.white)),
-                          subtitle: Text('${t['time']} - المبلغ: ${t['amount']}', style: const TextStyle(color: Colors.grey)),
-                        );
-                      },
-                    ),
-                  ),
-                ],
+            Center(
+              child: Text(
+                _isBotActive ? "البوت يعمل... بيدوس كل دقيقة" : "البوت متوقف",
+                style: TextStyle(fontSize: 20, color: _isBotActive ? Colors.tealAccent : Colors.white),
               ),
             ),
           if (_isLoading && _showPlatform)
