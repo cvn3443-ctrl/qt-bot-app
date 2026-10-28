@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Interceptor',
+      title: 'QTXSY Auto Interceptor',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexInterceptorScreen(),
+      home: const QuotexAutoScreen(),
     );
   }
 }
 
-class QuotexInterceptorScreen extends StatefulWidget {
-  const QuotexInterceptorScreen({super.key});
+class QuotexAutoScreen extends StatefulWidget {
+  const QuotexAutoScreen({super.key});
 
   @override
-  State<QuotexInterceptorScreen> createState() => _QuotexInterceptorScreenState();
+  State<QuotexAutoScreen> createState() => _QuotexAutoScreenState();
 }
 
-class _QuotexInterceptorScreenState extends State<QuotexInterceptorScreen> {
+class _QuotexAutoScreenState extends State<QuotexAutoScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -43,13 +43,11 @@ class _QuotexInterceptorScreenState extends State<QuotexInterceptorScreen> {
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
           setState(() {
-            // نعرض بس أول 100 حرف عشان الشاشة ما تغرق
             String msg = message.message;
-            if (msg.length > 100) {
-              msg = msg.substring(0, 100) + "...";
+            if (msg.length > 150) {
+              msg = msg.substring(0, 150) + "...";
             }
             _logs.add("📥 ${msg}");
-            // نخلي الشاشة تنزل لتحت تلقائياً
             if (_logs.length > 50) _logs.removeAt(0);
           });
         },
@@ -63,73 +61,58 @@ class _QuotexInterceptorScreenState extends State<QuotexInterceptorScreen> {
             setState(() => _isLoading = false);
           },
         ),
-      )
-      ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
+      );
+      
+    // هون الحيلة: نحقن السكريبت قبل ما نفتح أي صفحة
+    _injectBeforeLoad();
   }
 
-  // دالة لحقن السكريبت الاعتراضي
-  void _injectInterceptor() async {
+  void _injectBeforeLoad() async {
+    // سكريبت الاعتراض
+    String injectScript = """
+      (function() {
+        if (window._ws_intercepted) return;
+        window._ws_intercepted = true;
+        var originalWebSocket = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+          FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
+          var ws = new originalWebSocket(url, protocols);
+          ws.addEventListener('message', function(event) {
+            var data = event.data;
+            if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
+              FlutterChannel.postMessage("📊 بيانات: " + data.substring(0, 100));
+            }
+          });
+          return ws;
+        };
+        window.WebSocket.prototype = originalWebSocket.prototype;
+        window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+        window.WebSocket.OPEN = originalWebSocket.OPEN;
+        window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+        window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+      })();
+    """;
+
+    // نحقن السكريبت في كل صفحة جديدة بتفتح
+    await _controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+    
+    // تحميل الصفحة
+    await _controller.loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
+    
+    // نحقن السكريبت فوراً بعد ما تتحمل الصفحة (أو قبل ما يفتح الـ ws)
+    await _controller.runJavaScript(injectScript);
+    
     setState(() {
-      _logs.clear();
-      _logs.add("--- جاري حقن السكريبت الاعتراضي ---");
+      _logs.add("✅ تم حقن السكريبت تلقائياً.");
     });
-
-    try {
-      // هاد السكريبت بيعترض WebSocket قبل ما يفتحه الموقع
-      await _controller.runJavaScript("""
-        (function() {
-          // إذا كان السكريبت محقون من قبل، نوقف
-          if (window._ws_intercepted) return;
-          window._ws_intercepted = true;
-
-          var originalWebSocket = window.WebSocket;
-          
-          window.WebSocket = function(url, protocols) {
-            // نطبع الرابط يلي عم يتصل فيه
-            FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
-            
-            var ws = new originalWebSocket(url, protocols);
-            
-            // نعترض الرسائل الجاية
-            ws.addEventListener('message', function(event) {
-              var data = event.data;
-              // إذا كانت الرسالة عبارة عن نص وفيه كلمة "history" أو "candles" أو "tick"
-              if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
-                FlutterChannel.postMessage("📊 بيانات: " + data);
-              }
-            });
-            
-            return ws;
-          };
-          
-          // نرجع باقي الخصائص للـ WebSocket الأصلي
-          window.WebSocket.prototype = originalWebSocket.prototype;
-          window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-          window.WebSocket.OPEN = originalWebSocket.OPEN;
-          window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-          window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-          
-          FlutterChannel.postMessage("✅ تم حقن السكريبت بنجاح! جاري اعتراض البيانات...");
-        })();
-      """);
-    } catch (e) {
-      setState(() => _logs.add("❌ خطأ: $e"));
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اعتراض بيانات WebSocket', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اعتراض تلقائي للبيانات', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.security, color: Colors.tealAccent),
-            tooltip: 'حقن السكريبت',
-            onPressed: _injectInterceptor,
-          ),
-        ],
       ),
       body: Column(
         children: [
