@@ -6,8 +6,8 @@ import 'package:flutter/services.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterForegroundTask.initCommunicationPort(); // رخيص، ما بيعلّق
-  runApp(const MyApp()); // فتح الشاشة فوراً
+  FlutterForegroundTask.initCommunicationPort();
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -38,12 +38,20 @@ class _MainScreenState extends State<MainScreen> {
   late WebViewController _controller;
   bool _isLoading = true;
   bool _isBotActive = false;
+  bool _isDemoMode = true;
   bool _showPlatform = true;
+
+  // إعدادات المبلغ والمضاعفة
+  final TextEditingController _amountController = TextEditingController(text: "1.0");
+  bool _useMartingale = false;
+  double _currentAmount = 1.0;
+  
+  Timer? _tradeTimer;
+  bool _isCallTurn = true;
 
   @override
   void initState() {
     super.initState();
-    // المتصفح
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
@@ -56,20 +64,18 @@ class _MainScreenState extends State<MainScreen> {
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
 
-    // بعد ما الشاشة تفتح، نطلب الأذونات والخلفية (حسب كلام صديقك)
+    // إعدادات الخلفية (تشتغل بعد ما تفتح الشاشة)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupBackgroundStuff();
     });
   }
 
   Future<void> _setupBackgroundStuff() async {
-    // طلب إذن الإشعارات
     final status = await FlutterForegroundTask.checkNotificationPermission();
     if (status != NotificationPermission.granted) {
       await FlutterForegroundTask.requestNotificationPermission();
     }
     
-    // تهيئة الخلفية
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'qtxsy_service',
@@ -84,6 +90,7 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
+  // دالة الدوس على أي زر
   void _clickButton(String text) {
     _controller.runJavaScript("""
       (function() {
@@ -102,23 +109,152 @@ class _MainScreenState extends State<MainScreen> {
     """);
   }
 
+  // إدخال المبلغ والدوس
+  void _executeTrade(String direction) {
+    if (!_isBotActive) return;
+    String buttonText = direction == "CALL" ? "شراء" : "بيع";
+    
+    _controller.runJavaScript("""
+      (function() {
+        let input = document.querySelector('input[type="number"]') || document.querySelector('input[inputmode="decimal"]');
+        if (input) {
+          input.value = "$_currentAmount";
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })();
+    """);
+    
+    _clickButton(buttonText);
+    HapticFeedback.heavyImpact();
+  }
+
   void _startBot() async {
     setState(() => _isBotActive = true);
+    _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
     
-    // تشغيل الخلفية
+    if (_isDemoMode) {
+      _clickButton("ديمو");
+    } else {
+      _clickButton("حقيقي");
+    }
+
     await FlutterForegroundTask.startService(
-      notificationTitle: 'البوت شغال',
-      notificationText: 'عم يراقب السوق...',
+      notificationTitle: 'QTXSY Bot Active',
+      notificationText: 'البوت شغال...',
       callback: startCallback,
     );
-    
-    // اهتزاز وإشعار
-    HapticFeedback.heavyImpact();
+
+    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
+      _executeTrade(_isCallTurn ? "CALL" : "PUT");
+      _isCallTurn = !_isCallTurn;
+
+      if (_useMartingale) {
+        _currentAmount *= 2.0;
+      } else {
+        _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
+      }
+    });
   }
 
   void _stopBot() async {
     setState(() => _isBotActive = false);
+    _tradeTimer?.cancel();
     await FlutterForegroundTask.stopService();
+  }
+
+  void _showBotSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                left: 20, right: 20, top: 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ديمو'),
+                            selected: _isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = true),
+                          ),
+                          const SizedBox(width: 10),
+                          ChoiceChip(
+                            label: const Text('حقيقي'),
+                            selected: !_isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _amountController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'قيمة الصفقة (\$)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.attach_money),
+                    ),
+                  ),
+                  SwitchListTile(
+                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
+                    value: _useMartingale,
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _useMartingale = val),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
+                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
+                      onPressed: () {
+                        if (_isBotActive) {
+                          _stopBot();
+                        } else {
+                          _startBot();
+                        }
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _tradeTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -128,40 +264,7 @@ class _MainScreenState extends State<MainScreen> {
         title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.tealAccent),
-            onPressed: () {
-              showModalBottomSheet(
-                context: context,
-                backgroundColor: const Color(0xFF1E1E1E),
-                builder: (context) => Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('إعدادات البوت', style: TextStyle(fontSize: 22, color: Colors.tealAccent)),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
-                          foregroundColor: Colors.black,
-                        ),
-                        onPressed: () {
-                          if (_isBotActive) {
-                            _stopBot();
-                          } else {
-                            _startBot();
-                          }
-                          Navigator.pop(context);
-                        },
-                        child: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت'),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+          IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
