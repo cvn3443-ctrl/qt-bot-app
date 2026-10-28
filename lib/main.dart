@@ -33,6 +33,31 @@ class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
   final List<String> _logs = [];
   bool _isLoading = true;
 
+  // السكريبت يلي رح نحقنه
+  final String _injectScript = """
+    (function() {
+      if (window._ws_intercepted) return;
+      window._ws_intercepted = true;
+      var originalWebSocket = window.WebSocket;
+      window.WebSocket = function(url, protocols) {
+        FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
+        var ws = new originalWebSocket(url, protocols);
+        ws.addEventListener('message', function(event) {
+          var data = event.data;
+          if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
+            FlutterChannel.postMessage("📊 بيانات: " + data.substring(0, 100));
+          }
+        });
+        return ws;
+      };
+      window.WebSocket.prototype = originalWebSocket.prototype;
+      window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+      window.WebSocket.OPEN = originalWebSocket.OPEN;
+      window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+      window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+    })();
+  """;
+
   @override
   void initState() {
     super.initState();
@@ -44,9 +69,7 @@ class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
         onMessageReceived: (JavaScriptMessage message) {
           setState(() {
             String msg = message.message;
-            if (msg.length > 150) {
-              msg = msg.substring(0, 150) + "...";
-            }
+            if (msg.length > 150) msg = msg.substring(0, 150) + "...";
             _logs.add("📥 ${msg}");
             if (_logs.length > 50) _logs.removeAt(0);
           });
@@ -56,39 +79,14 @@ class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
         NavigationDelegate(
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
+            // هون الحيلة: نحقن السكريبت أول ما تبدأ الصفحة تتحمل
+            _controller.runJavaScript(_injectScript);
           },
           onPageFinished: (String url) {
             setState(() => _isLoading = false);
           },
         ),
       )
-      // نضيف السكريبت كـ "userScript" عشان يشتغل مع كل صفحة جديدة
-      ..addUserScript(WebViewUserScript(
-        source: """
-          (function() {
-            if (window._ws_intercepted) return;
-            window._ws_intercepted = true;
-            var originalWebSocket = window.WebSocket;
-            window.WebSocket = function(url, protocols) {
-              FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
-              var ws = new originalWebSocket(url, protocols);
-              ws.addEventListener('message', function(event) {
-                var data = event.data;
-                if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
-                  FlutterChannel.postMessage("📊 بيانات: " + data.substring(0, 100));
-                }
-              });
-              return ws;
-            };
-            window.WebSocket.prototype = originalWebSocket.prototype;
-            window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-            window.WebSocket.OPEN = originalWebSocket.OPEN;
-            window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-            window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-          })();
-        """,
-        injectionTime: UserScriptInjectionTime.documentStart, // هاد المفتاح
-      ))
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
@@ -96,7 +94,7 @@ class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اعتراض مبكر (Document Start)', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اعتراض مبكر (Early)', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
       ),
       body: Column(
