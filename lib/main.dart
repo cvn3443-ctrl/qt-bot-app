@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Auto Interceptor',
+      title: 'QTXSY Early Interceptor',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexAutoScreen(),
+      home: const QuotexEarlyScreen(),
     );
   }
 }
 
-class QuotexAutoScreen extends StatefulWidget {
-  const QuotexAutoScreen({super.key});
+class QuotexEarlyScreen extends StatefulWidget {
+  const QuotexEarlyScreen({super.key});
 
   @override
-  State<QuotexAutoScreen> createState() => _QuotexAutoScreenState();
+  State<QuotexEarlyScreen> createState() => _QuotexEarlyScreenState();
 }
 
-class _QuotexAutoScreenState extends State<QuotexAutoScreen> {
+class _QuotexEarlyScreenState extends State<QuotexEarlyScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -61,57 +61,42 @@ class _QuotexAutoScreenState extends State<QuotexAutoScreen> {
             setState(() => _isLoading = false);
           },
         ),
-      );
-      
-    // هون الحيلة: نحقن السكريبت قبل ما نفتح أي صفحة
-    _injectBeforeLoad();
-  }
-
-  void _injectBeforeLoad() async {
-    // سكريبت الاعتراض
-    String injectScript = """
-      (function() {
-        if (window._ws_intercepted) return;
-        window._ws_intercepted = true;
-        var originalWebSocket = window.WebSocket;
-        window.WebSocket = function(url, protocols) {
-          FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
-          var ws = new originalWebSocket(url, protocols);
-          ws.addEventListener('message', function(event) {
-            var data = event.data;
-            if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
-              FlutterChannel.postMessage("📊 بيانات: " + data.substring(0, 100));
-            }
-          });
-          return ws;
-        };
-        window.WebSocket.prototype = originalWebSocket.prototype;
-        window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
-        window.WebSocket.OPEN = originalWebSocket.OPEN;
-        window.WebSocket.CLOSING = originalWebSocket.CLOSING;
-        window.WebSocket.CLOSED = originalWebSocket.CLOSED;
-      })();
-    """;
-
-    // نحقن السكريبت في كل صفحة جديدة بتفتح
-    await _controller.setJavaScriptMode(JavaScriptMode.unrestricted);
-    
-    // تحميل الصفحة
-    await _controller.loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
-    
-    // نحقن السكريبت فوراً بعد ما تتحمل الصفحة (أو قبل ما يفتح الـ ws)
-    await _controller.runJavaScript(injectScript);
-    
-    setState(() {
-      _logs.add("✅ تم حقن السكريبت تلقائياً.");
-    });
+      )
+      // نضيف السكريبت كـ "userScript" عشان يشتغل مع كل صفحة جديدة
+      ..addUserScript(WebViewUserScript(
+        source: """
+          (function() {
+            if (window._ws_intercepted) return;
+            window._ws_intercepted = true;
+            var originalWebSocket = window.WebSocket;
+            window.WebSocket = function(url, protocols) {
+              FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
+              var ws = new originalWebSocket(url, protocols);
+              ws.addEventListener('message', function(event) {
+                var data = event.data;
+                if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
+                  FlutterChannel.postMessage("📊 بيانات: " + data.substring(0, 100));
+                }
+              });
+              return ws;
+            };
+            window.WebSocket.prototype = originalWebSocket.prototype;
+            window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+            window.WebSocket.OPEN = originalWebSocket.OPEN;
+            window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+            window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+          })();
+        """,
+        injectionTime: UserScriptInjectionTime.documentStart, // هاد المفتاح
+      ))
+      ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اعتراض تلقائي للبيانات', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اعتراض مبكر (Document Start)', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
       ),
       body: Column(
