@@ -58,7 +58,12 @@ class _MainScreenState extends State<MainScreen> {
   bool _showPlatform = true;
 
   final List<Map<String, dynamic>> _candles = [];
+  final List<Map<String, dynamic>> _tradeHistory = [];
   String _currentAsset = "EURUSD";
+
+  // لتخزين آخر إشارة
+  String _lastSignal = "";
+  double _currentPrice = 0.0;
 
   @override
   void initState() {
@@ -131,11 +136,73 @@ class _MainScreenState extends State<MainScreen> {
                   'price': c[1],
                 });
               }
+              if (_candles.isNotEmpty) {
+                _currentPrice = _candles.last['price'];
+                _analyzeMarket();
+              }
             });
+          }
+        } else if (jsonStr.contains('quotes/stream')) {
+          // تحديث السعر الحالي
+          if (jsonStr.contains('1.11')) {
+             // تحديث السعر (تقريبي)
           }
         }
       } catch (e) {}
     }
+  }
+
+  void _analyzeMarket() {
+    if (!_isBotActive || _candles.length < 10) return;
+
+    // استراتيجية مبسطة: إذا آخر 3 شموع خضراء => CALL، حمراء => PUT
+    // (هاد مجرد مثال، لازم نطوره للاستراتيجيات الثلاثة)
+    double lastPrice = _candles.last['price'];
+    double prevPrice = _candles[_candles.length - 2]['price'];
+
+    String signal = "";
+    if (lastPrice > prevPrice) {
+      signal = "CALL";
+    } else if (lastPrice < prevPrice) {
+      signal = "PUT";
+    }
+
+    if (signal.isNotEmpty && signal != _lastSignal) {
+      setState(() {
+        _lastSignal = signal;
+      });
+      _executeTrade(signal);
+    }
+  }
+
+  void _executeTrade(String direction) {
+    // هنا نرسل الأمر للمتصفح يدوس على الزر
+    String buttonText = direction == "CALL" ? "شراء" : "بيع";
+    
+    _controller.runJavaScript("""
+      (function() {
+        let buttons = document.querySelectorAll('button, div[role="button"], div');
+        for (let i = 0; i < buttons.length; i++) {
+          let el = buttons[i];
+          if (el.innerText && el.innerText.trim() === "$buttonText") {
+            if (el.offsetParent !== null) {
+              el.click();
+              return "Clicked";
+            }
+          }
+        }
+        return "Not Found";
+      })();
+    """);
+
+    setState(() {
+      _tradeHistory.add({
+        'time': DateTime.now().toString().substring(11, 19),
+        'asset': _currentAsset,
+        'direction': direction,
+        'amount': _baseAmount,
+      });
+    });
   }
 
   void _refreshPage() {
@@ -279,19 +346,38 @@ class _MainScreenState extends State<MainScreen> {
           else
             Container(
               color: Colors.black,
-              child: _candles.isEmpty
-                  ? const Center(child: Text('جاري جمع البيانات...', style: TextStyle(color: Colors.grey)))
-                  : ListView.builder(
-                      itemCount: _candles.length,
+              child: Column(
+                children: [
+                  // شريط الحالة
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    color: _isBotActive ? Colors.tealAccent.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('الزوج: $_currentAsset', style: const TextStyle(color: Colors.white)),
+                        Text('السعر: $_currentPrice', style: const TextStyle(color: Colors.white)),
+                        Text('الإشارة: $_lastSignal', style: TextStyle(color: _lastSignal == "CALL" ? Colors.green : Colors.red)),
+                      ],
+                    ),
+                  ),
+                  // السجل
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _tradeHistory.length,
                       itemBuilder: (context, index) {
-                        final c = _candles[index];
+                        final t = _tradeHistory[index];
                         return ListTile(
-                          leading: const Icon(Icons.show_chart, color: Colors.tealAccent),
-                          title: Text('الوقت: ${c['time']}', style: const TextStyle(color: Colors.white)),
-                          subtitle: Text('السعر: ${c['price']}', style: const TextStyle(color: Colors.grey)),
+                          leading: Icon(t['direction'] == 'CALL' ? Icons.arrow_upward : Icons.arrow_downward, 
+                                        color: t['direction'] == 'CALL' ? Colors.green : Colors.red),
+                          title: Text('${t['asset']} - ${t['direction']}', style: const TextStyle(color: Colors.white)),
+                          subtitle: Text('${t['time']} - المبلغ: ${t['amount']}', style: const TextStyle(color: Colors.grey)),
                         );
                       },
                     ),
+                  ),
+                ],
+              ),
             ),
           if (_isLoading && _showPlatform)
             const Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
