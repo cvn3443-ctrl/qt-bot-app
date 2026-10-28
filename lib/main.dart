@@ -57,18 +57,15 @@ class _MainScreenState extends State<MainScreen> {
   bool _useMartingale = false;
   bool _showPlatform = true;
 
-  // قائمة الأزواج العشرين (10 عالمي + 10 OTC)
+  // قائمة الأزواج العشرين
   final List<String> _targetAssets = [
-    // Global
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
     "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-    // OTC
     "CHFJPY_otc", "USDCAD_otc", "EURJPY_otc", "AUDCAD_otc", "EURAUD_otc",
     "AUDUSD_otc", "GBPUSD_otc", "EURUSD_otc", "NZDUSD_otc", "GBPJPY_otc"
   ];
   
   int _currentAssetIndex = 0;
-  final List<Map<String, dynamic>> _candles = [];
   final List<Map<String, dynamic>> _tradeHistory = [];
   String _lastSignal = "";
   double _currentPrice = 0.0;
@@ -137,15 +134,8 @@ class _MainScreenState extends State<MainScreen> {
           final data = jsonDecode(jsonStr);
           if (data['history'] != null) {
             setState(() {
-              _candles.clear();
-              for (var c in data['history']) {
-                _candles.add({
-                  'time': c[0],
-                  'price': c[1],
-                });
-              }
-              if (_candles.isNotEmpty) {
-                _currentPrice = _candles.last['price'];
+              if (data['history'].isNotEmpty) {
+                _currentPrice = data['history'].last[1];
                 _analyzeMarket();
               }
             });
@@ -156,30 +146,18 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _analyzeMarket() {
-    if (!_isBotActive || _candles.length < 10) return;
-
-    double lastPrice = _candles.last['price'];
-    double prevPrice = _candles[_candles.length - 2]['price'];
-
-    String signal = "";
-    if (lastPrice > prevPrice) {
-      signal = "CALL";
-    } else if (lastPrice < prevPrice) {
-      signal = "PUT";
-    }
-
-    if (signal.isNotEmpty && signal != _lastSignal) {
-      setState(() {
-        _lastSignal = signal;
-        _status = "إشارة: $signal للزوج ${_targetAssets[_currentAssetIndex]}";
-      });
-      _executeTrade(signal);
-    }
+    if (!_isBotActive) return;
+    // تحليل بسيط (هنطوره لاحقاً)
+    String signal = "CALL"; 
+    setState(() {
+      _lastSignal = signal;
+      _status = "إشارة: $signal للزوج ${_targetAssets[_currentAssetIndex]}";
+    });
+    _executeTrade(signal);
   }
 
   void _executeTrade(String direction) {
     String buttonText = direction == "CALL" ? "شراء" : "بيع";
-    
     _controller.runJavaScript("""
       (function() {
         let buttons = document.querySelectorAll('button, div[role="button"], div');
@@ -195,7 +173,6 @@ class _MainScreenState extends State<MainScreen> {
         return "Not Found";
       })();
     """);
-
     setState(() {
       _tradeHistory.add({
         'time': DateTime.now().toString().substring(11, 19),
@@ -208,22 +185,17 @@ class _MainScreenState extends State<MainScreen> {
 
   void _startBotCycle() {
     if (!_isBotActive) return;
-    
     _currentAssetIndex = (_currentAssetIndex + 1) % _targetAssets.length;
     String currentAsset = _targetAssets[_currentAssetIndex];
-    
     setState(() {
       _status = "جاري تحليل: $currentAsset";
     });
-
-    // محاولة الضغط على الزوج في المنصة
     _controller.runJavaScript("""
       (function() {
         let elements = document.querySelectorAll('div, span, button, a');
         for (let i = 0; i < elements.length; i++) {
           let el = elements[i];
           let text = el.innerText ? el.innerText.trim() : "";
-          // نبحث عن اسم الزوج (مع أو بدون OTC)
           let searchText = "$currentAsset".replace('_otc', '');
           if (text === searchText || text.includes(searchText)) {
             el.click();
@@ -233,10 +205,112 @@ class _MainScreenState extends State<MainScreen> {
         return "Not Found";
       })();
     """);
-
     Future.delayed(const Duration(seconds: 5), () {
       if (_isBotActive) _startBotCycle();
     });
+  }
+
+  // دالة الإعدادات (اللي رجعت)
+  void _showBotSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              padding: const EdgeInsets.all(20.0),
+              height: MediaQuery.of(context).size.height * 0.7, // عشان يظهر كل شي
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
+                  const Divider(color: Colors.white24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ديمو'),
+                            selected: _isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = true),
+                          ),
+                          const SizedBox(width: 10),
+                          ChoiceChip(
+                            label: const Text('حقيقي'),
+                            selected: !_isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('المبلغ (\$):', style: TextStyle(color: Colors.white)),
+                  Slider(
+                    value: _baseAmount,
+                    min: 1.0,
+                    max: 10.0,
+                    divisions: 9,
+                    label: '\$${_baseAmount.toStringAsFixed(0)}',
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _baseAmount = val),
+                  ),
+                  SwitchListTile(
+                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
+                    value: _useMartingale,
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _useMartingale = val),
+                  ),
+                  const Divider(color: Colors.white24),
+                  const Text('الأزواج المستهدفة:', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                  const SizedBox(height: 10),
+                  // عرض الأزواج
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _targetAssets.length,
+                      itemBuilder: (context, index) {
+                        return ListTile(
+                          leading: const Icon(Icons.currency_exchange, color: Colors.tealAccent, size: 20),
+                          title: Text(_targetAssets[index], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
+                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
+                      onPressed: () {
+                        setModalState(() => _isBotActive = !_isBotActive);
+                        setState(() => _isBotActive = _isBotActive);
+                        if (_isBotActive) {
+                          _startBotCycle();
+                        }
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -248,7 +322,9 @@ class _MainScreenState extends State<MainScreen> {
         actions: [
           IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: () {
             _controller.reload();
+            setState(() { _tradeHistory.clear(); });
           }),
+          IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
