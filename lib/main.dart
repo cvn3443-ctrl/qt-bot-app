@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -93,11 +94,6 @@ class _MainScreenState extends State<MainScreen> {
     })();
   """;
 
-  @override
-  void initState() {
-    super.initState();
-  }
-
   void _processData(String raw) {
     if (raw.startsWith("BIN:")) {
       String jsonStr = raw.substring(4);
@@ -130,7 +126,6 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showBotSettings() {
-    // نفس كود الإعدادات (ديمو/حقيقي، المبلغ، المضاعفات) اللي بعتلك ياه سابقاً
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
@@ -147,7 +142,44 @@ class _MainScreenState extends State<MainScreen> {
                 children: [
                   const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
                   const Divider(color: Colors.white24),
-                  // ... (نفس الكود)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ديمو'),
+                            selected: _isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = true),
+                          ),
+                          const SizedBox(width: 10),
+                          ChoiceChip(
+                            label: const Text('حقيقي'),
+                            selected: !_isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('المبلغ (\$):', style: TextStyle(color: Colors.white)),
+                  Slider(
+                    value: _baseAmount,
+                    min: 1.0,
+                    max: 10.0,
+                    divisions: 9,
+                    label: '\$${_baseAmount.toStringAsFixed(0)}',
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _baseAmount = val),
+                  ),
+                  SwitchListTile(
+                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
+                    value: _useMartingale,
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _useMartingale = val),
+                  ),
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
