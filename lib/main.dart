@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -12,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Bot',
+      title: 'QTXSY Decoder',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexScreen(),
+      home: const QuotexDecodeScreen(),
     );
   }
 }
 
-class QuotexScreen extends StatefulWidget {
-  const QuotexScreen({super.key});
+class QuotexDecodeScreen extends StatefulWidget {
+  const QuotexDecodeScreen({super.key});
 
   @override
-  State<QuotexScreen> createState() => _QuotexScreenState();
+  State<QuotexDecodeScreen> createState() => _QuotexDecodeScreenState();
 }
 
-class _QuotexScreenState extends State<QuotexScreen> {
+class _QuotexDecodeScreenState extends State<QuotexDecodeScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -43,27 +42,23 @@ class _QuotexScreenState extends State<QuotexScreen> {
       ..addJavaScriptChannel(
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
-          String raw = message.message;
-          
-          // إذا كانت الرسالة فيها بيانات شموع
-          if (raw.contains('history/list') || raw.contains('candles')) {
-            setState(() {
-              _logs.add("📊 شمعة جديدة وصلت!");
-            });
-          } else {
-            // نطبع باقي الرسائل للتشخيص
-            setState(() {
-              if (raw.length > 100) raw = raw.substring(0, 100) + "...";
-              _logs.add("📥 $raw");
-            });
-          }
+          setState(() {
+            String msg = message.message;
+            // إذا كانت الرسالة شمعة، نحاول نفكها
+            if (msg.contains('quotes/stream') || msg.contains('history')) {
+              _logs.add("🔍 رسالة خام: ${msg.substring(0, 50)}...");
+            } else {
+              _logs.add("📥 $msg");
+            }
+            if (_logs.length > 30) _logs.removeAt(0);
+          });
         },
       )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
-            // حقن السكريبت
+            // اعتراض الـ WebSocket
             _controller.runJavaScript("""
               (function() {
                 if (window._ws_intercepted) return;
@@ -87,9 +82,7 @@ class _QuotexScreenState extends State<QuotexScreen> {
               })();
             """);
           },
-          onPageFinished: (String url) {
-            setState(() => _isLoading = false);
-          },
+          onPageFinished: (String url) => setState(() => _isLoading = false),
         ),
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
@@ -99,7 +92,7 @@ class _QuotexScreenState extends State<QuotexScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اعتراض الشموع', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('فك تشفير الشموع', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
       ),
       body: Column(
