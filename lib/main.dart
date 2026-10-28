@@ -257,7 +257,7 @@ class _MainScreenState extends State<MainScreen> {
             InAppWebView(
               initialUrlRequest: URLRequest(url: WebUri('https://quotex.com/ar/demo-trade')),
               initialSettings: InAppWebViewSettings(
-                useHybridComposition: false, // حل لمشكلة الشاشة السوداء
+                useHybridComposition: false, // حل مشكلة الشاشة السوداء
               ),
               initialUserScripts: UnmodifiableListView([
                 UserScript(
