@@ -60,8 +60,6 @@ class _MainScreenState extends State<MainScreen> {
   final List<Map<String, dynamic>> _candles = [];
   final List<Map<String, dynamic>> _tradeHistory = [];
   String _currentAsset = "EURUSD";
-
-  // لتخزين آخر إشارة
   String _lastSignal = "";
   double _currentPrice = 0.0;
 
@@ -81,6 +79,7 @@ class _MainScreenState extends State<MainScreen> {
         NavigationDelegate(
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
+            // هون السكريبت يلي بيلقط البيانات (لقطنا فيه الشموع سابقاً)
             _controller.runJavaScript("""
               (function() {
                 if (window._ws_intercepted) return;
@@ -142,11 +141,6 @@ class _MainScreenState extends State<MainScreen> {
               }
             });
           }
-        } else if (jsonStr.contains('quotes/stream')) {
-          // تحديث السعر الحالي
-          if (jsonStr.contains('1.11')) {
-             // تحديث السعر (تقريبي)
-          }
         }
       } catch (e) {}
     }
@@ -155,8 +149,7 @@ class _MainScreenState extends State<MainScreen> {
   void _analyzeMarket() {
     if (!_isBotActive || _candles.length < 10) return;
 
-    // استراتيجية مبسطة: إذا آخر 3 شموع خضراء => CALL، حمراء => PUT
-    // (هاد مجرد مثال، لازم نطوره للاستراتيجيات الثلاثة)
+    // استراتيجية بسيطة: مقارنة السعر الحالي بالسابق
     double lastPrice = _candles.last['price'];
     double prevPrice = _candles[_candles.length - 2]['price'];
 
@@ -176,7 +169,6 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _executeTrade(String direction) {
-    // هنا نرسل الأمر للمتصفح يدوس على الزر
     String buttonText = direction == "CALL" ? "شراء" : "بيع";
     
     _controller.runJavaScript("""
@@ -348,7 +340,6 @@ class _MainScreenState extends State<MainScreen> {
               color: Colors.black,
               child: Column(
                 children: [
-                  // شريط الحالة
                   Container(
                     padding: const EdgeInsets.all(8),
                     color: _isBotActive ? Colors.tealAccent.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
@@ -356,12 +347,11 @@ class _MainScreenState extends State<MainScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text('الزوج: $_currentAsset', style: const TextStyle(color: Colors.white)),
-                        Text('السعر: $_currentPrice', style: const TextStyle(color: Colors.white)),
+                        Text('السعر: ${_currentPrice.toStringAsFixed(5)}', style: const TextStyle(color: Colors.white)),
                         Text('الإشارة: $_lastSignal', style: TextStyle(color: _lastSignal == "CALL" ? Colors.green : Colors.red)),
                       ],
                     ),
                   ),
-                  // السجل
                   Expanded(
                     child: ListView.builder(
                       itemCount: _tradeHistory.length,
