@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Chart Reader',
+      title: 'QTXSY Fetch Candles',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexChartScreen(),
+      home: const QuotexFetchScreen(),
     );
   }
 }
 
-class QuotexChartScreen extends StatefulWidget {
-  const QuotexChartScreen({super.key});
+class QuotexFetchScreen extends StatefulWidget {
+  const QuotexFetchScreen({super.key});
 
   @override
-  State<QuotexChartScreen> createState() => _QuotexChartScreenState();
+  State<QuotexFetchScreen> createState() => _QuotexFetchScreenState();
 }
 
-class _QuotexChartScreenState extends State<QuotexChartScreen> {
+class _QuotexFetchScreenState extends State<QuotexFetchScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -43,57 +43,58 @@ class _QuotexChartScreenState extends State<QuotexChartScreen> {
         NavigationDelegate(
           onPageStarted: (String url) => setState(() => _isLoading = true),
           onPageFinished: (String url) => setState(() => _isLoading = false),
+          // استقبال الرسائل من الجافا سكربت
+          onPageFinished: (String url) {
+             setState(() => _isLoading = false);
+             // نضيف جسر تواصل عشان السكريبت يبعتلنا البيانات
+             _controller.addJavaScriptChannel(
+                'FlutterChannel',
+                onMessageReceived: (JavaScriptMessage message) {
+                  setState(() {
+                    _logs.add("📥 استقبلنا من السيرفر: ${message.message}");
+                  });
+                },
+             );
+          },
         ),
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _readChartData() async {
+  void _fetchCandlesFromBrowser() async {
     setState(() {
       _logs.clear();
-      _logs.add("--- جاري قراءة بيانات الشموع ---");
+      _logs.add("--- محاولة سحب الشموع من داخل المتصفح ---");
     });
 
     try {
-      // سكريبت يدور على أي مفتاح فيه "q_chart"، ويطبع اللي جواته
-      final result = await _controller.runJavaScriptReturningResult("""
+      // سكريبت يفتح اتصال وهمي من داخل المتصفح ويطلب الشموع
+      await _controller.runJavaScript("""
         (function() {
-          let chartKeys = [];
-          for (let key in window) {
-            if (key.includes('q_chart')) {
-              chartKeys.push(key);
-            }
-          }
+          // محاولة الاتصال بالسيرفر الداخلي للمنصة
+          let socket = new WebSocket("wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket");
           
-          if (chartKeys.length === 0) return "لم يتم العثور على أي شارت.";
+          socket.onopen = function(e) {
+              // إرسال طلب الشموع بعد الاتصال
+              socket.send('40');
+              setTimeout(() => {
+                  // طلب شموع EURUSD
+                  socket.send('42["loadHistoryPeriod",{"asset":"EURUSD","time":' + Math.floor(Date.now() / 1000) + ',"period":300}]');
+              }, 1000);
+          };
 
-          let firstKey = chartKeys[0];
-          let chartObj = window[firstKey];
-          
-          if (!chartObj) return "الشارت موجود ولكن فارغ.";
-
-          // نحاول نلاقي مصفوفة الشموع جوا الكائن
-          let dataKeys = Object.keys(chartObj);
-          let output = "مفاتيح الشارت: " + dataKeys.join(", ") + "\\n";
-          
-          // غالباً الشموع تكون بمفتاح اسمه 'data' أو 'candles'
-          if (chartObj.data) {
-             output += "عدد الشموع: " + chartObj.data.length + "\\n";
-             output += "آخر شمعة: " + JSON.stringify(chartObj.data[chartObj.data.length - 1]);
-          } else if (chartObj.candles) {
-             output += "عدد الشموع: " + chartObj.candles.length + "\\n";
-             output += "آخر شمعة: " + JSON.stringify(chartObj.candles[chartObj.candles.length - 1]);
-          } else {
-             output += "لم نجد مصفوفة شموع مباشرة، سنطبع أول 500 حرف من الكائن:\\n";
-             output += JSON.stringify(chartObj).substring(0, 500);
-          }
-
-          return output;
+          socket.onmessage = function(event) {
+              // بمجرد وصول الرد، نبعته لـ Flutter
+              if (event.data.includes('history')) {
+                  FlutterChannel.postMessage(event.data.substring(0, 500));
+                  socket.close();
+              }
+          };
         })();
       """);
-
+      
       setState(() {
-        _logs.add(result.toString());
+        _logs.add("📤 تم إرسال طلب الشموع. جاري انتظار الرد...");
       });
 
     } catch (e) {
@@ -105,12 +106,12 @@ class _QuotexChartScreenState extends State<QuotexChartScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('قراءة الشموع', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('سحب الشموع من المتصفح', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
           IconButton(
-            icon: const Icon(Icons.search, color: Colors.tealAccent),
-            onPressed: _readChartData,
+            icon: const Icon(Icons.download, color: Colors.tealAccent),
+            onPressed: _fetchCandlesFromBrowser,
           ),
         ],
       ),
