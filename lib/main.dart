@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:audioplayers/audioplayers.dart'; // مكتبة الصوت
+import 'package:flutter/services.dart'; // للاهتزاز
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -57,11 +57,9 @@ class _MainScreenState extends State<MainScreen> {
   bool _isDemoMode = true;
   bool _showPlatform = true;
   
-  Timer? _tradeTimer; // مؤقت الدوس
-  Timer? _soundTimer; // مؤقت الصوت
-  final AudioPlayer _audioPlayer = AudioPlayer();
-  
-  bool _isCallTurn = true; // عشان نبدل بين شراء وبيع
+  Timer? _tradeTimer;
+  Timer? _vibrationTimer;
+  bool _isCallTurn = true;
 
   @override
   void initState() {
@@ -77,7 +75,6 @@ class _MainScreenState extends State<MainScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  // دالة الدوس على الزر
   void _clickButton(String text) {
     _controller.runJavaScript("""
       (function() {
@@ -96,42 +93,30 @@ class _MainScreenState extends State<MainScreen> {
     """);
   }
 
-  // تشغيل البوت (الدوس العشوائي)
   void _startBot() {
     setState(() => _isBotActive = true);
     
-    // صوت خفيف كل 5 دقايق
-    _soundTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      _playSound('soft_click.mp3'); // صوت خفيف
+    // اهتزاز خفيف كل 5 دقايق (للتحليل)
+    _vibrationTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      HapticFeedback.lightImpact(); // اهتزاز خفيف
     });
 
     // دوسة كل دقيقة (مرة شراء، مرة بيع)
     _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (_isCallTurn) {
         _clickButton("شراء");
-        _playSound('trade_sound.mp3'); // صوت الدخول
       } else {
         _clickButton("بيع");
-        _playSound('trade_sound.mp3');
       }
-      _isCallTurn = !_isCallTurn; // نبدل للدورة الجاية
+      HapticFeedback.heavyImpact(); // اهتزاز قوي (للدخول)
+      _isCallTurn = !_isCallTurn;
     });
   }
 
-  // إيقاف البوت
   void _stopBot() {
     setState(() => _isBotActive = false);
     _tradeTimer?.cancel();
-    _soundTimer?.cancel();
-  }
-
-  // تشغيل الصوت
-  Future<void> _playSound(String fileName) async {
-    try {
-      await _audioPlayer.play(AssetSource('sounds/$fileName'));
-    } catch (e) {
-      debugPrint("Audio error: $e");
-    }
+    _vibrationTimer?.cancel();
   }
 
   void _showBotSettings() {
@@ -205,7 +190,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     _tradeTimer?.cancel();
-    _soundTimer?.cancel();
+    _vibrationTimer?.cancel();
     super.dispose();
   }
 
