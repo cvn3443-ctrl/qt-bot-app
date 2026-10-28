@@ -55,11 +55,8 @@ class _MainScreenState extends State<MainScreen> {
   bool _isDemoMode = true;
   double _baseAmount = 1.0;
   bool _useMartingale = false;
-  
-  // المتغير لعرض المنصة أو البوت
   bool _showPlatform = true; 
 
-  // لتخزين الشموع
   final List<Map<String, dynamic>> _candles = [];
   String _currentAsset = "EURUSD";
 
@@ -141,6 +138,14 @@ class _MainScreenState extends State<MainScreen> {
         // تجاهل
       }
     }
+  }
+
+  void _refreshPage() {
+    _controller.reload();
+    setState(() {
+      _candles.clear();
+      _isLoading = true;
+    });
   }
 
   void _showBotSettings() {
@@ -241,6 +246,7 @@ class _MainScreenState extends State<MainScreen> {
         title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
+          IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: _refreshPage), // زر التحديث
           IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
         ],
         bottom: PreferredSize(
@@ -270,14 +276,13 @@ class _MainScreenState extends State<MainScreen> {
       ),
       body: Stack(
         children: [
-          // المحتوى (إما المنصة أو البوت)
           if (_showPlatform)
             WebViewWidget(controller: _controller)
           else
             Container(
               color: Colors.black,
               child: _candles.isEmpty
-                  ? const Center(child: Text('جاري جمع البيانات...', style: TextStyle(color: Colors.grey)))
+                  ? const Center(child: Text('جاري جمع البيانات... (دوس على تحديث فوق وانت بالمنصة)', style: TextStyle(color: Colors.grey)))
                   : ListView.builder(
                       itemCount: _candles.length,
                       itemBuilder: (context, index) {
