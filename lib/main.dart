@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Clicker Test',
+      title: 'QTXSY Data Inspector',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexInspectorScreen(),
+      home: const QuotexDataScreen(),
     );
   }
 }
 
-class QuotexInspectorScreen extends StatefulWidget {
-  const QuotexInspectorScreen({super.key});
+class QuotexDataScreen extends StatefulWidget {
+  const QuotexDataScreen({super.key});
 
   @override
-  State<QuotexInspectorScreen> createState() => _QuotexInspectorScreenState();
+  State<QuotexDataScreen> createState() => _QuotexDataScreenState();
 }
 
-class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
+class _QuotexDataScreenState extends State<QuotexDataScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -48,38 +48,37 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  // دالة بتدور على زر الشراء أو البيع وتدوس عليه
-  void _clickTradeButton(String textToClick) async {
+  void _inspectData() async {
     setState(() {
       _logs.clear();
-      _logs.add("--- محاولة الضغط على زر: $textToClick ---");
+      _logs.add("--- جاري البحث عن بيانات الشموع ---");
     });
 
     try {
-      // سكريبت بيدور على العناصر ويحاول يلاقي زر فيه النص المطلوب
+      // سكريبت بيدور على أي كائن فيه بيانات شموع
       final result = await _controller.runJavaScriptReturningResult("""
         (function() {
-          let found = false;
-          // ندور على كل العناصر يلي ممكن تكون أزرار (div أو button)
-          let elements = document.querySelectorAll('button, div[role="button"], div');
-          for (let i = 0; i < elements.length; i++) {
-            let el = elements[i];
-            // إذا كان النص تبع العنصر هو نفسه النص المطلوب
-            if (el.innerText && el.innerText.trim() === "$textToClick") {
-              // نتأكد إنه العنصر ظاهر وقابل للضغط
-              if (el.offsetParent !== null) {
-                el.click(); // نضغط عليه
-                found = true;
-                break; // نوقف بعد أول زر نلاقيه
-              }
-            }
+          let found = [];
+          // ندور على الكائنات العامة يلي ممكن تحتوي على بيانات
+          if (window.chartData) found.push("window.chartData موجود");
+          if (window.candles) found.push("window.candles موجود");
+          if (window.ticks) found.push("window.ticks موجود");
+          
+          // إذا ما لقينا، ندور على أي عنصر فيه كلمة "chart" أو "candle"
+          if (found.length === 0) {
+             for (let key in window) {
+                if (key.toLowerCase().includes('chart') || key.toLowerCase().includes('candle')) {
+                    found.push("مفتاح محتمل: " + key);
+                }
+             }
           }
-          return found ? "✅ تم الضغط على '$textToClick' بنجاح!" : "❌ لم يتم العثور على زر '$textToClick'.";
+          
+          return JSON.stringify(found);
         })();
       """);
 
       setState(() {
-        _logs.add(result.toString());
+        _logs.add("النتيجة: $result");
       });
 
     } catch (e) {
@@ -91,20 +90,12 @@ class _QuotexInspectorScreenState extends State<QuotexInspectorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اختبار الضغط على الأزرار', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('فحص بيانات الشموع', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
-          // زر تجربة الشراء
           IconButton(
-            icon: const Icon(Icons.arrow_upward, color: Colors.greenAccent),
-            tooltip: 'تجربة زر الشراء',
-            onPressed: () => _clickTradeButton('شراء'),
-          ),
-          // زر تجربة البيع
-          IconButton(
-            icon: const Icon(Icons.arrow_downward, color: Colors.redAccent),
-            tooltip: 'تجربة زر البيع',
-            onPressed: () => _clickTradeButton('بيع'),
+            icon: const Icon(Icons.search, color: Colors.tealAccent),
+            onPressed: _inspectData,
           ),
         ],
       ),
