@@ -52,16 +52,11 @@ class _MainScreenState extends State<MainScreen> {
   late WebViewController _controller;
   bool _isLoading = true;
   bool _isBotActive = false;
-  bool _isDemoMode = true;
-  double _baseAmount = 1.0;
-  bool _useMartingale = false;
   bool _showPlatform = true;
 
   final List<Map<String, dynamic>> _candles = [];
-  final List<Map<String, dynamic>> _tradeHistory = [];
+  final List<String> _assetsList = [];
   String _currentAsset = "EURUSD";
-  String _lastSignal = "";
-  double _currentPrice = 0.0;
 
   @override
   void initState() {
@@ -79,7 +74,6 @@ class _MainScreenState extends State<MainScreen> {
         NavigationDelegate(
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
-            // هون السكريبت يلي بيلقط البيانات (لقطنا فيه الشموع سابقاً)
             _controller.runJavaScript("""
               (function() {
                 if (window._ws_intercepted) return;
@@ -135,10 +129,6 @@ class _MainScreenState extends State<MainScreen> {
                   'price': c[1],
                 });
               }
-              if (_candles.isNotEmpty) {
-                _currentPrice = _candles.last['price'];
-                _analyzeMarket();
-              }
             });
           }
         }
@@ -146,154 +136,25 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _analyzeMarket() {
-    if (!_isBotActive || _candles.length < 10) return;
-
-    // استراتيجية بسيطة: مقارنة السعر الحالي بالسابق
-    double lastPrice = _candles.last['price'];
-    double prevPrice = _candles[_candles.length - 2]['price'];
-
-    String signal = "";
-    if (lastPrice > prevPrice) {
-      signal = "CALL";
-    } else if (lastPrice < prevPrice) {
-      signal = "PUT";
-    }
-
-    if (signal.isNotEmpty && signal != _lastSignal) {
-      setState(() {
-        _lastSignal = signal;
-      });
-      _executeTrade(signal);
-    }
-  }
-
-  void _executeTrade(String direction) {
-    String buttonText = direction == "CALL" ? "شراء" : "بيع";
-    
+  // دالة جديدة: تدور على أزرار الأزواج وتدوس عليها
+  void _findAndClickAssets() {
     _controller.runJavaScript("""
       (function() {
-        let buttons = document.querySelectorAll('button, div[role="button"], div');
-        for (let i = 0; i < buttons.length; i++) {
-          let el = buttons[i];
-          if (el.innerText && el.innerText.trim() === "$buttonText") {
-            if (el.offsetParent !== null) {
-              el.click();
-              return "Clicked";
+        // ندور على أي عنصر فيه نص فيه "EURUSD" أو "GBPUSD" أو "USDJPY" أو "OTC"
+        let elements = document.querySelectorAll('div, span, button, a');
+        let found = [];
+        for (let i = 0; i < elements.length; i++) {
+          let el = elements[i];
+          let text = el.innerText ? el.innerText.trim() : "";
+          if (text.includes('USD') || text.includes('EUR') || text.includes('JPY') || text.includes('GBP')) {
+            if (text.length < 15 && text.length > 5) { // عشان نتجنب النصوص الطويلة
+              found.push(text);
             }
           }
         }
-        return "Not Found";
+        FlutterChannel.postMessage("ASSETS_FOUND:" + JSON.stringify(found));
       })();
     """);
-
-    setState(() {
-      _tradeHistory.add({
-        'time': DateTime.now().toString().substring(11, 19),
-        'asset': _currentAsset,
-        'direction': direction,
-        'amount': _baseAmount,
-      });
-    });
-  }
-
-  void _refreshPage() {
-    _controller.reload();
-    setState(() {
-      _candles.clear();
-      _isLoading = true;
-    });
-  }
-
-  void _showBotSettings() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1E1E1E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
-                  const Divider(color: Colors.white24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
-                      Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('ديمو'),
-                            selected: _isDemoMode,
-                            onSelected: (val) => setModalState(() => _isDemoMode = true),
-                          ),
-                          const SizedBox(width: 10),
-                          ChoiceChip(
-                            label: const Text('حقيقي'),
-                            selected: !_isDemoMode,
-                            onSelected: (val) => setModalState(() => _isDemoMode = false),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('المبلغ (\$):', style: TextStyle(color: Colors.white)),
-                  Slider(
-                    value: _baseAmount,
-                    min: 1.0,
-                    max: 10.0,
-                    divisions: 9,
-                    label: '\$${_baseAmount.toStringAsFixed(0)}',
-                    activeColor: Colors.tealAccent,
-                    onChanged: (val) => setModalState(() => _baseAmount = val),
-                  ),
-                  SwitchListTile(
-                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
-                    value: _useMartingale,
-                    activeColor: Colors.tealAccent,
-                    onChanged: (val) => setModalState(() => _useMartingale = val),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
-                        foregroundColor: Colors.black,
-                      ),
-                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
-                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
-                      onPressed: () {
-                        setModalState(() => _isBotActive = !_isBotActive);
-                        setState(() => _isBotActive = _isBotActive);
-                        if (_isBotActive) {
-                          FlutterForegroundTask.startService(
-                            notificationTitle: 'QTXSY Bot Active',
-                            notificationText: 'البوت شغال...',
-                            callback: startCallback,
-                          );
-                        } else {
-                          FlutterForegroundTask.stopService();
-                        }
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   @override
@@ -303,8 +164,10 @@ class _MainScreenState extends State<MainScreen> {
         title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: _refreshPage),
-          IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
+          IconButton(
+            icon: const Icon(Icons.list, color: Colors.tealAccent),
+            onPressed: _findAndClickAssets,
+          ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
@@ -338,36 +201,16 @@ class _MainScreenState extends State<MainScreen> {
           else
             Container(
               color: Colors.black,
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    color: _isBotActive ? Colors.tealAccent.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('الزوج: $_currentAsset', style: const TextStyle(color: Colors.white)),
-                        Text('السعر: ${_currentPrice.toStringAsFixed(5)}', style: const TextStyle(color: Colors.white)),
-                        Text('الإشارة: $_lastSignal', style: TextStyle(color: _lastSignal == "CALL" ? Colors.green : Colors.red)),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _tradeHistory.length,
+              child: _assetsList.isEmpty
+                  ? const Center(child: Text('جاري البحث عن الأزواج...', style: TextStyle(color: Colors.grey)))
+                  : ListView.builder(
+                      itemCount: _assetsList.length,
                       itemBuilder: (context, index) {
-                        final t = _tradeHistory[index];
                         return ListTile(
-                          leading: Icon(t['direction'] == 'CALL' ? Icons.arrow_upward : Icons.arrow_downward, 
-                                        color: t['direction'] == 'CALL' ? Colors.green : Colors.red),
-                          title: Text('${t['asset']} - ${t['direction']}', style: const TextStyle(color: Colors.white)),
-                          subtitle: Text('${t['time']} - المبلغ: ${t['amount']}', style: const TextStyle(color: Colors.grey)),
+                          title: Text(_assetsList[index], style: const TextStyle(color: Colors.white)),
                         );
                       },
                     ),
-                  ),
-                ],
-              ),
             ),
           if (_isLoading && _showPlatform)
             const Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
