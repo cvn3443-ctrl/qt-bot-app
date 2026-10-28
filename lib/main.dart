@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Fetch Candles',
+      title: 'QTXSY Deep Search',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexFetchScreen(),
+      home: const QuotexDeepScreen(),
     );
   }
 }
 
-class QuotexFetchScreen extends StatefulWidget {
-  const QuotexFetchScreen({super.key});
+class QuotexDeepScreen extends StatefulWidget {
+  const QuotexDeepScreen({super.key});
 
   @override
-  State<QuotexFetchScreen> createState() => _QuotexFetchScreenState();
+  State<QuotexDeepScreen> createState() => _QuotexDeepScreenState();
 }
 
-class _QuotexFetchScreenState extends State<QuotexFetchScreen> {
+class _QuotexDeepScreenState extends State<QuotexDeepScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -43,54 +43,61 @@ class _QuotexFetchScreenState extends State<QuotexFetchScreen> {
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
           setState(() {
-            _logs.add("📥 استقبلنا من السيرفر: ${message.message}");
+            _logs.add("📥 ${message.message}");
           });
         },
       )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (String url) => setState(() => _isLoading = true),
-          // دمجنا onPageFinished هون عشان ما يتكرر
-          onPageFinished: (String url) {
-            setState(() => _isLoading = false);
-          },
+          onPageFinished: (String url) => setState(() => _isLoading = false),
         ),
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _fetchCandlesFromBrowser() async {
+  void _deepSearch() async {
     setState(() {
       _logs.clear();
-      _logs.add("--- محاولة سحب الشموع من داخل المتصفح ---");
+      _logs.add("--- جاري البحث العميق عن الشموع ---");
     });
 
     try {
       await _controller.runJavaScript("""
         (function() {
-          let socket = new WebSocket("wss://ws2.quotex.com/socket.io/?EIO=3&transport=websocket");
-          
-          socket.onopen = function(e) {
-              socket.send('40');
-              setTimeout(function() {
-                  let timestamp = Math.floor(Date.now() / 1000);
-                  socket.send('42["loadHistoryPeriod",{"asset":"EURUSD","time":' + timestamp + ',"period":300}]');
-              }, 1000);
-          };
+          // 1. البحث في الـ window عن أي كائن يحتوي على بيانات شموع
+          let foundData = null;
+          for (let key in window) {
+            try {
+                let obj = window[key];
+                // إذا كان الكائن فيه خصائص شبيهة بالشموع
+                if (obj && (obj.candles || obj.data || obj.history || obj.quotes)) {
+                    let arr = obj.candles || obj.data || obj.history || obj.quotes;
+                    if (Array.isArray(arr) && arr.length > 0) {
+                        // نتأكد إنه العنصر الأول فيه خصائص open/high/low/close أو time
+                        let sample = arr[0];
+                        if (sample && (sample.open !== undefined || sample.time !== undefined || sample.close !== undefined)) {
+                            foundData = arr;
+                            break;
+                        }
+                    }
+                }
+            } catch(e) {}
+          }
 
-          socket.onmessage = function(event) {
-              if (event.data.includes('history')) {
-                  FlutterChannel.postMessage(event.data.substring(0, 200));
-                  socket.close();
-              }
-          };
+          if (foundData) {
+              FlutterChannel.postMessage("✅ لقينا شموع! عددها: " + foundData.length + "\\nعينة: " + JSON.stringify(foundData[foundData.length - 1]));
+          } else {
+              // 2. إذا ما لقينا بالـ window، نبحث في مخزن البيانات IndexedDB
+              let req = indexedDB.open('firebaseLocalStorageDb'); // اسم شائع
+              req.onsuccess = function() {
+                  FlutterChannel.postMessage("⚠️ ما لقينا شموع مباشرة. جربنا IndexedDB بس ما في نتيجة.");
+              };
+              req.onerror = function() {
+                  FlutterChannel.postMessage("❌ ما لقينا شموع مباشرة، ولا في IndexedDB.");
+              };
+          }
         })();
       """);
-      
-      setState(() {
-        _logs.add("📤 تم إرسال طلب الشموع. جاري انتظار الرد...");
-      });
-
     } catch (e) {
       setState(() => _logs.add("❌ خطأ: $e"));
     }
@@ -100,12 +107,12 @@ class _QuotexFetchScreenState extends State<QuotexFetchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('سحب الشموع من المتصفح', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('البحث العميق عن الشموع', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
           IconButton(
-            icon: const Icon(Icons.download, color: Colors.tealAccent),
-            onPressed: _fetchCandlesFromBrowser,
+            icon: const Icon(Icons.search, color: Colors.tealAccent),
+            onPressed: _deepSearch,
           ),
         ],
       ),
