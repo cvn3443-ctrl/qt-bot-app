@@ -57,8 +57,22 @@ class _MainScreenState extends State<MainScreen> {
   bool _useMartingale = false;
   bool _showPlatform = true;
 
-  final List<String> _foundAssets = [];
-  String _status = "جاري البحث...";
+  // قائمة الأزواج العشرين (10 عالمي + 10 OTC)
+  final List<String> _targetAssets = [
+    // Global
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
+    "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
+    // OTC
+    "CHFJPY_otc", "USDCAD_otc", "EURJPY_otc", "AUDCAD_otc", "EURAUD_otc",
+    "AUDUSD_otc", "GBPUSD_otc", "EURUSD_otc", "NZDUSD_otc", "GBPJPY_otc"
+  ];
+  
+  int _currentAssetIndex = 0;
+  final List<Map<String, dynamic>> _candles = [];
+  final List<Map<String, dynamic>> _tradeHistory = [];
+  String _lastSignal = "";
+  double _currentPrice = 0.0;
+  String _status = "جاهز";
 
   @override
   void initState() {
@@ -76,7 +90,6 @@ class _MainScreenState extends State<MainScreen> {
         NavigationDelegate(
           onPageStarted: (String url) {
             setState(() => _isLoading = true);
-            // السكريبت يلي بيلقط رسائل السيرفر
             _controller.runJavaScript("""
               (function() {
                 if (window._ws_intercepted) return;
@@ -88,9 +101,8 @@ class _MainScreenState extends State<MainScreen> {
                   ws.addEventListener('message', function(event) {
                     var data = event.data;
                     if (typeof data === 'string') {
-                      // نلقط رسائل قائمة الأزواج
-                      if (data.includes('instruments') || data.includes('asset')) {
-                         FlutterChannel.postMessage("RAW:" + data);
+                      if (data.includes('quotes') || data.includes('history')) {
+                         FlutterChannel.postMessage("TEXT:" + data);
                       }
                     } else if (data instanceof ArrayBuffer) {
                       var uint8 = new Uint8Array(data);
@@ -98,10 +110,7 @@ class _MainScreenState extends State<MainScreen> {
                       for (var i = 0; i < uint8.length; i++) {
                           str += String.fromCharCode(uint8[i]);
                       }
-                      // نلقط قائمة الأزواج لو كانت بالباينري
-                      if (str.includes('instruments') || str.includes('asset')) {
-                         FlutterChannel.postMessage("RAW:" + str);
-                      }
+                      FlutterChannel.postMessage("BIN:" + str);
                     }
                   });
                   return ws;
@@ -121,27 +130,112 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _processData(String raw) {
-    if (raw.startsWith("RAW:")) {
-      String data = raw.substring(4);
-      // نحاول نستخرج أسماء الأزواج من الرسالة
-      RegExp regExp = RegExp(r'"([A-Z]{3,6}(?:_otc)?)"');
-      Iterable<Match> matches = regExp.allMatches(data);
-      
-      for (var match in matches) {
-        String asset = match.group(1) ?? "";
-        if (asset.isNotEmpty && !_foundAssets.contains(asset) && !asset.contains('USD_')) {
-           setState(() {
-             _foundAssets.add(asset);
-           });
+    if (raw.startsWith("BIN:")) {
+      String jsonStr = raw.substring(4);
+      try {
+        if (jsonStr.contains('"history"')) {
+          final data = jsonDecode(jsonStr);
+          if (data['history'] != null) {
+            setState(() {
+              _candles.clear();
+              for (var c in data['history']) {
+                _candles.add({
+                  'time': c[0],
+                  'price': c[1],
+                });
+              }
+              if (_candles.isNotEmpty) {
+                _currentPrice = _candles.last['price'];
+                _analyzeMarket();
+              }
+            });
+          }
         }
-      }
+      } catch (e) {}
     }
   }
 
-  void _openAssetsList() {
+  void _analyzeMarket() {
+    if (!_isBotActive || _candles.length < 10) return;
+
+    double lastPrice = _candles.last['price'];
+    double prevPrice = _candles[_candles.length - 2]['price'];
+
+    String signal = "";
+    if (lastPrice > prevPrice) {
+      signal = "CALL";
+    } else if (lastPrice < prevPrice) {
+      signal = "PUT";
+    }
+
+    if (signal.isNotEmpty && signal != _lastSignal) {
+      setState(() {
+        _lastSignal = signal;
+        _status = "إشارة: $signal للزوج ${_targetAssets[_currentAssetIndex]}";
+      });
+      _executeTrade(signal);
+    }
+  }
+
+  void _executeTrade(String direction) {
+    String buttonText = direction == "CALL" ? "شراء" : "بيع";
+    
+    _controller.runJavaScript("""
+      (function() {
+        let buttons = document.querySelectorAll('button, div[role="button"], div');
+        for (let i = 0; i < buttons.length; i++) {
+          let el = buttons[i];
+          if (el.innerText && el.innerText.trim() === "$buttonText") {
+            if (el.offsetParent !== null) {
+              el.click();
+              return "Clicked";
+            }
+          }
+        }
+        return "Not Found";
+      })();
+    """);
+
     setState(() {
-      _showPlatform = false;
-      _status = "الأزواج المكتشفة: ${_foundAssets.length}";
+      _tradeHistory.add({
+        'time': DateTime.now().toString().substring(11, 19),
+        'asset': _targetAssets[_currentAssetIndex],
+        'direction': direction,
+        'amount': _baseAmount,
+      });
+    });
+  }
+
+  void _startBotCycle() {
+    if (!_isBotActive) return;
+    
+    _currentAssetIndex = (_currentAssetIndex + 1) % _targetAssets.length;
+    String currentAsset = _targetAssets[_currentAssetIndex];
+    
+    setState(() {
+      _status = "جاري تحليل: $currentAsset";
+    });
+
+    // محاولة الضغط على الزوج في المنصة
+    _controller.runJavaScript("""
+      (function() {
+        let elements = document.querySelectorAll('div, span, button, a');
+        for (let i = 0; i < elements.length; i++) {
+          let el = elements[i];
+          let text = el.innerText ? el.innerText.trim() : "";
+          // نبحث عن اسم الزوج (مع أو بدون OTC)
+          let searchText = "$currentAsset".replace('_otc', '');
+          if (text === searchText || text.includes(searchText)) {
+            el.click();
+            return "Clicked";
+          }
+        }
+        return "Not Found";
+      })();
+    """);
+
+    Future.delayed(const Duration(seconds: 5), () {
+      if (_isBotActive) _startBotCycle();
     });
   }
 
@@ -154,15 +248,7 @@ class _MainScreenState extends State<MainScreen> {
         actions: [
           IconButton(icon: const Icon(Icons.refresh, color: Colors.tealAccent), onPressed: () {
             _controller.reload();
-            setState(() {
-              _foundAssets.clear();
-            });
           }),
-          IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: () {
-             // إعدادات البوت
-          }),
-          // زر الأزواج
-          IconButton(icon: const Icon(Icons.list, color: Colors.tealAccent), onPressed: _openAssetsList),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(50),
@@ -198,22 +284,31 @@ class _MainScreenState extends State<MainScreen> {
               color: Colors.black,
               child: Column(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Text(_status, style: const TextStyle(color: Colors.tealAccent, fontSize: 18)),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    color: _isBotActive ? Colors.tealAccent.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('الزوج: ${_targetAssets[_currentAssetIndex]}', style: const TextStyle(color: Colors.white)),
+                        Text('السعر: ${_currentPrice.toStringAsFixed(5)}', style: const TextStyle(color: Colors.white)),
+                        Text('الإشارة: $_lastSignal', style: TextStyle(color: _lastSignal == "CALL" ? Colors.green : Colors.red)),
+                      ],
+                    ),
                   ),
                   Expanded(
-                    child: _foundAssets.isEmpty
-                        ? const Center(child: Text('جاري جمع الأزواج من السيرفر...', style: TextStyle(color: Colors.grey)))
-                        : ListView.builder(
-                            itemCount: _foundAssets.length,
-                            itemBuilder: (context, index) {
-                              return ListTile(
-                                leading: const Icon(Icons.currency_exchange, color: Colors.tealAccent),
-                                title: Text(_foundAssets[index], style: const TextStyle(color: Colors.white)),
-                              );
-                            },
-                          ),
+                    child: ListView.builder(
+                      itemCount: _tradeHistory.length,
+                      itemBuilder: (context, index) {
+                        final t = _tradeHistory[index];
+                        return ListTile(
+                          leading: Icon(t['direction'] == 'CALL' ? Icons.arrow_upward : Icons.arrow_downward, 
+                                        color: t['direction'] == 'CALL' ? Colors.green : Colors.red),
+                          title: Text('${t['asset']} - ${t['direction']}', style: const TextStyle(color: Colors.white)),
+                          subtitle: Text('${t['time']} - المبلغ: ${t['amount']}', style: const TextStyle(color: Colors.grey)),
+                        );
+                      },
+                    ),
                   ),
                 ],
               ),
