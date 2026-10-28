@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Deep Search',
+      title: 'QTXSY Interceptor',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexDeepScreen(),
+      home: const QuotexInterceptorScreen(),
     );
   }
 }
 
-class QuotexDeepScreen extends StatefulWidget {
-  const QuotexDeepScreen({super.key});
+class QuotexInterceptorScreen extends StatefulWidget {
+  const QuotexInterceptorScreen({super.key});
 
   @override
-  State<QuotexDeepScreen> createState() => _QuotexDeepScreenState();
+  State<QuotexInterceptorScreen> createState() => _QuotexInterceptorScreenState();
 }
 
-class _QuotexDeepScreenState extends State<QuotexDeepScreen> {
+class _QuotexInterceptorScreenState extends State<QuotexInterceptorScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -43,59 +43,73 @@ class _QuotexDeepScreenState extends State<QuotexDeepScreen> {
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
           setState(() {
-            _logs.add("📥 ${message.message}");
+            // نعرض بس أول 100 حرف عشان الشاشة ما تغرق
+            String msg = message.message;
+            if (msg.length > 100) {
+              msg = msg.substring(0, 100) + "...";
+            }
+            _logs.add("📥 ${msg}");
+            // نخلي الشاشة تنزل لتحت تلقائياً
+            if (_logs.length > 50) _logs.removeAt(0);
           });
         },
       )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (String url) => setState(() => _isLoading = false),
+          onPageStarted: (String url) {
+            setState(() => _isLoading = true);
+          },
+          onPageFinished: (String url) {
+            setState(() => _isLoading = false);
+          },
         ),
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _deepSearch() async {
+  // دالة لحقن السكريبت الاعتراضي
+  void _injectInterceptor() async {
     setState(() {
       _logs.clear();
-      _logs.add("--- جاري البحث العميق عن الشموع ---");
+      _logs.add("--- جاري حقن السكريبت الاعتراضي ---");
     });
 
     try {
+      // هاد السكريبت بيعترض WebSocket قبل ما يفتحه الموقع
       await _controller.runJavaScript("""
         (function() {
-          // 1. البحث في الـ window عن أي كائن يحتوي على بيانات شموع
-          let foundData = null;
-          for (let key in window) {
-            try {
-                let obj = window[key];
-                // إذا كان الكائن فيه خصائص شبيهة بالشموع
-                if (obj && (obj.candles || obj.data || obj.history || obj.quotes)) {
-                    let arr = obj.candles || obj.data || obj.history || obj.quotes;
-                    if (Array.isArray(arr) && arr.length > 0) {
-                        // نتأكد إنه العنصر الأول فيه خصائص open/high/low/close أو time
-                        let sample = arr[0];
-                        if (sample && (sample.open !== undefined || sample.time !== undefined || sample.close !== undefined)) {
-                            foundData = arr;
-                            break;
-                        }
-                    }
-                }
-            } catch(e) {}
-          }
+          // إذا كان السكريبت محقون من قبل، نوقف
+          if (window._ws_intercepted) return;
+          window._ws_intercepted = true;
 
-          if (foundData) {
-              FlutterChannel.postMessage("✅ لقينا شموع! عددها: " + foundData.length + "\\nعينة: " + JSON.stringify(foundData[foundData.length - 1]));
-          } else {
-              // 2. إذا ما لقينا بالـ window، نبحث في مخزن البيانات IndexedDB
-              let req = indexedDB.open('firebaseLocalStorageDb'); // اسم شائع
-              req.onsuccess = function() {
-                  FlutterChannel.postMessage("⚠️ ما لقينا شموع مباشرة. جربنا IndexedDB بس ما في نتيجة.");
-              };
-              req.onerror = function() {
-                  FlutterChannel.postMessage("❌ ما لقينا شموع مباشرة، ولا في IndexedDB.");
-              };
-          }
+          var originalWebSocket = window.WebSocket;
+          
+          window.WebSocket = function(url, protocols) {
+            // نطبع الرابط يلي عم يتصل فيه
+            FlutterChannel.postMessage("🔌 WebSocket URL: " + url);
+            
+            var ws = new originalWebSocket(url, protocols);
+            
+            // نعترض الرسائل الجاية
+            ws.addEventListener('message', function(event) {
+              var data = event.data;
+              // إذا كانت الرسالة عبارة عن نص وفيه كلمة "history" أو "candles" أو "tick"
+              if (typeof data === 'string' && (data.includes('history') || data.includes('candles') || data.includes('tick'))) {
+                FlutterChannel.postMessage("📊 بيانات: " + data);
+              }
+            });
+            
+            return ws;
+          };
+          
+          // نرجع باقي الخصائص للـ WebSocket الأصلي
+          window.WebSocket.prototype = originalWebSocket.prototype;
+          window.WebSocket.CONNECTING = originalWebSocket.CONNECTING;
+          window.WebSocket.OPEN = originalWebSocket.OPEN;
+          window.WebSocket.CLOSING = originalWebSocket.CLOSING;
+          window.WebSocket.CLOSED = originalWebSocket.CLOSED;
+          
+          FlutterChannel.postMessage("✅ تم حقن السكريبت بنجاح! جاري اعتراض البيانات...");
         })();
       """);
     } catch (e) {
@@ -107,12 +121,13 @@ class _QuotexDeepScreenState extends State<QuotexDeepScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('البحث العميق عن الشموع', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('اعتراض بيانات WebSocket', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
           IconButton(
-            icon: const Icon(Icons.search, color: Colors.tealAccent),
-            onPressed: _deepSearch,
+            icon: const Icon(Icons.security, color: Colors.tealAccent),
+            tooltip: 'حقن السكريبت',
+            onPressed: _injectInterceptor,
           ),
         ],
       ),
