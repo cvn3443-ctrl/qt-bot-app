@@ -3,10 +3,20 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:flutter/services.dart'; // للاهتزاز
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
+
+// متغيرات عامة عشان نقدر نوصلها من الخلفية
+final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // تهيئة الإشعارات
+  const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
+  await _notificationsPlugin.initialize(initializationSettings);
+
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
       channelId: 'qtxsy_bot_service',
@@ -56,10 +66,13 @@ class _MainScreenState extends State<MainScreen> {
   bool _isBotActive = false;
   bool _isDemoMode = true;
   bool _showPlatform = true;
-  
+
+  // إعدادات المبلغ
+  final TextEditingController _amountController = TextEditingController(text: "1.0");
+  bool _useMartingale = false;
+  double _currentAmount = 1.0;
+
   Timer? _tradeTimer;
-  Timer? _vibrationTimer;
-  bool _isCallTurn = true;
 
   @override
   void initState() {
@@ -75,10 +88,11 @@ class _MainScreenState extends State<MainScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
+  // دالة تدوس على زر (شراء، بيع، ديمو، حقيقي)
   void _clickButton(String text) {
     _controller.runJavaScript("""
       (function() {
-        let buttons = document.querySelectorAll('button, div[role="button"], div');
+        let buttons = document.querySelectorAll('button, div[role="button"], div, span');
         for (let i = 0; i < buttons.length; i++) {
           let el = buttons[i];
           if (el.innerText && el.innerText.trim() === "$text") {
@@ -93,30 +107,76 @@ class _MainScreenState extends State<MainScreen> {
     """);
   }
 
-  void _startBot() {
-    setState(() => _isBotActive = true);
+  // دالة تدخل المبلغ وتدوس شراء
+  void _executeTrade(String direction) {
+    String buttonText = direction == "CALL" ? "شراء" : "بيع";
+    // نحط المبلغ في الحقل
+    _controller.runJavaScript("""
+      (function() {
+        let input = document.querySelector('input[type="number"]') || document.querySelector('input[inputmode="decimal"]');
+        if (input) {
+          input.value = "$_currentAmount";
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      })();
+    """);
     
-    // اهتزاز خفيف كل 5 دقايق (للتحليل)
-    _vibrationTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      HapticFeedback.lightImpact(); // اهتزاز خفيف
-    });
+    // ندوس على الزر
+    _clickButton(buttonText);
+    
+    // اهتزاز وإشعار
+    HapticFeedback.heavyImpact();
+    _showNotification("دخول صفقة", "تم الدخول بـ $_currentAmount\$ على $direction");
+  }
 
-    // دوسة كل دقيقة (مرة شراء، مرة بيع)
-    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
-      if (_isCallTurn) {
-        _clickButton("شراء");
+  void _showNotification(String title, String body) async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'trade_channel', 'Trade Notifications',
+      importance: Importance.max, priority: Priority.high,
+    );
+    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+    await _notificationsPlugin.show(0, title, body, platformDetails);
+  }
+
+  // تشغيل البوت
+  void _startBot() async {
+    setState(() => _isBotActive = true);
+    _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
+    
+    // اختيار ديمو أو حقيقي
+    if (_isDemoMode) {
+      _clickButton("ديمو");
+    } else {
+      _clickButton("حقيقي");
+    }
+
+    // بدء الخلفية
+    await FlutterForegroundTask.startService(
+      notificationTitle: 'QTXSY Bot Active',
+      notificationText: 'البوت شغال...',
+      callback: startCallback,
+    );
+
+    // تشغيل المؤقت
+    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
+      // نختار اتجاه عشوائي (للتجربة)
+      bool isCall = DateTime.now().second % 2 == 0;
+      _executeTrade(isCall ? "CALL" : "PUT");
+
+      // إذا المضاعفة مفعلة، نضاعف المبلغ
+      if (_useMartingale) {
+        _currentAmount *= 2.0;
       } else {
-        _clickButton("بيع");
+        _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
       }
-      HapticFeedback.heavyImpact(); // اهتزاز قوي (للدخول)
-      _isCallTurn = !_isCallTurn;
     });
   }
 
-  void _stopBot() {
+  void _stopBot() async {
     setState(() => _isBotActive = false);
     _tradeTimer?.cancel();
-    _vibrationTimer?.cancel();
+    await FlutterForegroundTask.stopService();
   }
 
   void _showBotSettings() {
@@ -130,7 +190,10 @@ class _MainScreenState extends State<MainScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
-              padding: const EdgeInsets.all(20.0),
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                left: 20, right: 20, top: 20,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -157,7 +220,23 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _amountController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'قيمة الصفقة (\$)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.attach_money),
+                    ),
+                  ),
+                  SwitchListTile(
+                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
+                    value: _useMartingale,
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _useMartingale = val),
+                  ),
+                  const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
                     height: 50,
@@ -167,7 +246,7 @@ class _MainScreenState extends State<MainScreen> {
                         foregroundColor: Colors.black,
                       ),
                       icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
-                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت (تجربة)', style: const TextStyle(fontSize: 18)),
+                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
                       onPressed: () {
                         if (_isBotActive) {
                           _stopBot();
@@ -190,7 +269,6 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     _tradeTimer?.cancel();
-    _vibrationTimer?.cancel();
     super.dispose();
   }
 
