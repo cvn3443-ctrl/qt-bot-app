@@ -14,7 +14,9 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.2.2
   permission_handler: ^11.3.1
-  flutter_inappwebview: ^6.0.0
+  webview_flutter: ^4.7.0
+  webview_flutter_android: ^3.16.0
+  webview_flutter_wkwebview: ^3.13.0
   fl_chart: ^0.66.0
 
 dev_dependencies:
