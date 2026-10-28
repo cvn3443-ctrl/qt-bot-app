@@ -11,24 +11,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Data Inspector',
+      title: 'QTXSY Chart Reader',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         primaryColor: Colors.tealAccent,
       ),
-      home: const QuotexDataScreen(),
+      home: const QuotexChartScreen(),
     );
   }
 }
 
-class QuotexDataScreen extends StatefulWidget {
-  const QuotexDataScreen({super.key});
+class QuotexChartScreen extends StatefulWidget {
+  const QuotexChartScreen({super.key});
 
   @override
-  State<QuotexDataScreen> createState() => _QuotexDataScreenState();
+  State<QuotexChartScreen> createState() => _QuotexChartScreenState();
 }
 
-class _QuotexDataScreenState extends State<QuotexDataScreen> {
+class _QuotexChartScreenState extends State<QuotexChartScreen> {
   late WebViewController _controller;
   final List<String> _logs = [];
   bool _isLoading = true;
@@ -48,37 +48,52 @@ class _QuotexDataScreenState extends State<QuotexDataScreen> {
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
   }
 
-  void _inspectData() async {
+  void _readChartData() async {
     setState(() {
       _logs.clear();
-      _logs.add("--- جاري البحث عن بيانات الشموع ---");
+      _logs.add("--- جاري قراءة بيانات الشموع ---");
     });
 
     try {
-      // سكريبت بيدور على أي كائن فيه بيانات شموع
+      // سكريبت يدور على أي مفتاح فيه "q_chart"، ويطبع اللي جواته
       final result = await _controller.runJavaScriptReturningResult("""
         (function() {
-          let found = [];
-          // ندور على الكائنات العامة يلي ممكن تحتوي على بيانات
-          if (window.chartData) found.push("window.chartData موجود");
-          if (window.candles) found.push("window.candles موجود");
-          if (window.ticks) found.push("window.ticks موجود");
-          
-          // إذا ما لقينا، ندور على أي عنصر فيه كلمة "chart" أو "candle"
-          if (found.length === 0) {
-             for (let key in window) {
-                if (key.toLowerCase().includes('chart') || key.toLowerCase().includes('candle')) {
-                    found.push("مفتاح محتمل: " + key);
-                }
-             }
+          let chartKeys = [];
+          for (let key in window) {
+            if (key.includes('q_chart')) {
+              chartKeys.push(key);
+            }
           }
           
-          return JSON.stringify(found);
+          if (chartKeys.length === 0) return "لم يتم العثور على أي شارت.";
+
+          let firstKey = chartKeys[0];
+          let chartObj = window[firstKey];
+          
+          if (!chartObj) return "الشارت موجود ولكن فارغ.";
+
+          // نحاول نلاقي مصفوفة الشموع جوا الكائن
+          let dataKeys = Object.keys(chartObj);
+          let output = "مفاتيح الشارت: " + dataKeys.join(", ") + "\\n";
+          
+          // غالباً الشموع تكون بمفتاح اسمه 'data' أو 'candles'
+          if (chartObj.data) {
+             output += "عدد الشموع: " + chartObj.data.length + "\\n";
+             output += "آخر شمعة: " + JSON.stringify(chartObj.data[chartObj.data.length - 1]);
+          } else if (chartObj.candles) {
+             output += "عدد الشموع: " + chartObj.candles.length + "\\n";
+             output += "آخر شمعة: " + JSON.stringify(chartObj.candles[chartObj.candles.length - 1]);
+          } else {
+             output += "لم نجد مصفوفة شموع مباشرة، سنطبع أول 500 حرف من الكائن:\\n";
+             output += JSON.stringify(chartObj).substring(0, 500);
+          }
+
+          return output;
         })();
       """);
 
       setState(() {
-        _logs.add("النتيجة: $result");
+        _logs.add(result.toString());
       });
 
     } catch (e) {
@@ -90,12 +105,12 @@ class _QuotexDataScreenState extends State<QuotexDataScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('فحص بيانات الشموع', style: TextStyle(color: Colors.tealAccent)),
+        title: const Text('قراءة الشموع', style: TextStyle(color: Colors.tealAccent)),
         backgroundColor: Colors.black87,
         actions: [
           IconButton(
             icon: const Icon(Icons.search, color: Colors.tealAccent),
-            onPressed: _inspectData,
+            onPressed: _readChartData,
           ),
         ],
       ),
