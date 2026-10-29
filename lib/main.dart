@@ -67,7 +67,7 @@ class _HomePageState extends State<HomePage> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('CandlesChannel', onMessageReceived: (msg) {
         if (msg.message.startsWith('ping:')) {
-          // _addLog('[Ping] ${msg.message}'); // نشيلها عشان ما تغرق السجل
+          // _addLog('[Ping] ${msg.message}');
         }
       })
       ..addJavaScriptChannel('ClickResultChannel', onMessageReceived: (msg) {
@@ -111,62 +111,6 @@ class _HomePageState extends State<HomePage> {
     }
     return false;
   };
-
-  // === دالة الكشف عن الحساب (بناءً على الرصيد) ===
-  window.__qtxsyGetAccountMode = function() {
-    // 1. نشوف إذا في قائمة مفتوحة (بتحتوي على "حساب حقيقي" و "حساب تجريبي")
-    const allElements = document.querySelectorAll('div, span');
-    let hasReal = false;
-    let hasDemo = false;
-    for (let i = 0; i < allElements.length; i++) {
-      let text = (allElements[i].textContent || '').trim();
-      if (text === 'حساب حقيقي' || text === 'Real') hasReal = true;
-      if (text === 'حساب تجريبي' || text === 'Demo') hasDemo = true;
-    }
-    
-    // 2. نقرأ الرصيد من أعلى الشاشة
-    let balanceText = "";
-    for (let i = 0; i < allElements.length; i++) {
-      let text = (allElements[i].textContent || '').trim();
-      // الرصيد عادة بكون فيه $ أو أرقام كبيرة
-      if (text.includes('$') && text.length < 20) {
-        balanceText = text;
-        break;
-      }
-    }
-    
-    // 3. نحدد نوع الحساب
-    // إذا القائمة مفتوحة، نشوف الرصيد
-    if (hasReal && hasDemo) {
-      // ديمو عادة رصيده عالي (9,000+)، حقيقي رصيده 0 أو قليل
-      if (balanceText.includes('9,') || balanceText.includes('10,') || balanceText.includes('11,')) {
-        return 'demo';
-      } else {
-        return 'real';
-      }
-    }
-    
-    // إذا القائمة مسكرة، نعتمد على الرصيد
-    if (balanceText.includes('9,') || balanceText.includes('10,') || balanceText.includes('11,')) {
-      return 'demo';
-    }
-    if (balanceText.includes('0.00') || balanceText === '' || balanceText === '$0.00') {
-      return 'real';
-    }
-    
-    return 'unknown';
-  };
-
-  // أداة تشخيص (للتأكد)
-  window.__qtxsyDumpHeader = function() {
-    const header = document.querySelector('header') || document.body;
-    return header.outerHTML.substring(0, 2000);
-  };
-
-  // Ping (للتأكد إنه الجافاسكربت شغال)
-  setInterval(function() {
-    if (window.CandlesChannel) window.CandlesChannel.postMessage('ping:' + Date.now());
-  }, 10000);
 })();
 ''';
 
@@ -189,18 +133,6 @@ class _HomePageState extends State<HomePage> {
     ForegroundServiceController.initOptions();
   }
 
-  Future<bool> _confirmAccountModeMatches() async {
-    final r = await _webController.runJavaScriptReturningResult('window.__qtxsyGetAccountMode()');
-    final mode = r.toString().replaceAll('"', '');
-    final expected = _isDemo ? 'demo' : 'real';
-    if (mode != expected) {
-      _addLog('⛔ إيقاف أمان: الحساب الحالي ($mode) ≠ المطلوب ($expected) — ما دخلنا الصفقة');
-      return false;
-    }
-    _addLog('✅ الحساب مطابق ($mode)');
-    return true;
-  }
-
   void _startBot() async {
     await ForegroundServiceController.start();
     WakelockPlus.enable();
@@ -208,7 +140,8 @@ class _HomePageState extends State<HomePage> {
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
     });
-    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _analyzeAndTrade());
+    // كل دقيقة، بيدوس على زوج عشوائي
+    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _randomTrade());
     _logCleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) => _cleanOldLogs());
 
     setState(() => _botActive = true);
@@ -223,17 +156,17 @@ class _HomePageState extends State<HomePage> {
     setState(() => _botActive = false);
   }
 
-  void _analyzeAndTrade() async {
-    // 1. تأكيد الأمان
-    if (!await _confirmAccountModeMatches()) return;
-    
-    // 2. الدوس العشوائي
+  void _randomTrade() async {
+    // 1. نختار زوج عشوائي
     final allPairs = [...globalPairs, ...otcPairs];
     final pair = (allPairs..shuffle()).first;
     final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
     final texts = direction == 'شراء' ? ['شراء', 'Buy', 'CALL'] : ['بيع', 'Sell', 'PUT'];
-    
+
+    // 2. ندوس على الزر
     _webController.runJavaScript('window.__qtxsyClick(${jsonEncode(texts)});');
+    
+    // 3. نسجل ونبعت إشعار
     _addLog('[تجربة] $pair — $direction');
     NotificationService.showTradeAlert(pair, direction);
     FlutterForegroundTask.sendDataToTask(jsonEncode('آخر صفقة: $pair'));
@@ -261,10 +194,6 @@ class _HomePageState extends State<HomePage> {
     await prefs.setBool('isDemo', _isDemo);
     await prefs.setDouble('stake', _stake);
     await prefs.setBool('martingaleOn', _martingaleOn);
-    
-    _webController.runJavaScript(
-      "window.__qtxsyClick(${jsonEncode(_isDemo ? ['حساب تجريبي','تجريبي','Demo'] : ['حساب حقيقي','حقيقي','Real'])});",
-    );
   }
 
   void _openSettings() {
