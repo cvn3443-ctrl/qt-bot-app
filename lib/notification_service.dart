@@ -4,7 +4,6 @@ class NotificationService {
   static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
 
-  // لازم تنادى مرة وحدة بس، بعد أول frame — مش قبل ما تفتح الواجهة
   static Future<void> init() async {
     if (_initialized) return;
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -13,28 +12,26 @@ class NotificationService {
     _initialized = true;
   }
 
-  // إشعار خفيف — كل 5 دقايق، يأكد إنو البوت شغال وعم يحلل
+  // إشعار خفيف (النبضة) - Importance.defaultImportance عشان الصوت يشتغل
   static Future<void> showHeartbeat(String statusText) async {
     const details = AndroidNotificationDetails(
-      'heartbeat_channel', 'حالة البوت',
-      importance: Importance.low,
-      priority: Priority.low,
+      'heartbeat_channel_v2', 'حالة البوت',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
       playSound: true,
       enableVibration: false,
     );
     await _plugin.show(100, 'البوت شغال', statusText, const NotificationDetails(android: details));
   }
 
-  // إشعار قوي — لحظة دخول صفقة فعلية
+  // إشعار قوي (الصفقة) - Importance.max
   static Future<void> showTradeAlert(String pair, String direction) async {
     const details = AndroidNotificationDetails(
-      'trade_alerts', 'تنبيهات الصفقات',
+      'trade_alerts_v2', 'تنبيهات الصفقات',
       importance: Importance.max,
       priority: Priority.high,
       enableVibration: true,
       playSound: true,
-      // لصوت مخصص: حطوا ملف mp3 بـ android/app/src/main/res/raw/trade_sound.mp3
-      // وفعلوا: sound: RawResourceAndroidNotificationSound('trade_sound'),
     );
     await _plugin.show(200, 'دخلنا صفقة', '$pair — $direction', const NotificationDetails(android: details));
   }
