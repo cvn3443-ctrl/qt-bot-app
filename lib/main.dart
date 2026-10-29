@@ -3,15 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter/services.dart';
-import 'notification_service.dart';
-import 'foreground_service.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // تهيئة الإشعارات (بس للصفقات)
-  await NotificationService.init();
-
   FlutterForegroundTask.initCommunicationPort();
   runApp(const MyApp());
 }
@@ -77,14 +71,13 @@ class _MainScreenState extends State<MainScreen> {
       )
       ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
 
-    // إعدادات الخلفية (بعد فتح الشاشة)
+    // تهيئة الخلفية (بعد فتح الشاشة)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupBackgroundStuff();
     });
   }
 
   Future<void> _setupBackgroundStuff() async {
-    // طلب إذن الإشعارات
     final status = await FlutterForegroundTask.checkNotificationPermission();
     if (status != NotificationPermission.granted) {
       await FlutterForegroundTask.requestNotificationPermission();
@@ -138,10 +131,7 @@ class _MainScreenState extends State<MainScreen> {
     """);
     
     _clickButton(buttonText);
-    
-    // اهتزاز + إشعار
     HapticFeedback.heavyImpact();
-    NotificationService.showTradeNotification("دخول صفقة", "تم الدخول بـ $_currentAmount\$ على $direction");
   }
 
   void _startBot() async {
@@ -154,14 +144,12 @@ class _MainScreenState extends State<MainScreen> {
       _clickButton("حقيقي");
     }
 
-    // تشغيل الخلفية
     await FlutterForegroundTask.startService(
       notificationTitle: 'QTXSY Bot Active',
       notificationText: 'البوت شغال...',
-      callback: startCallback, // من ملف foreground_service.dart
+      callback: startCallback,
     );
 
-    // المؤقت
     _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
       _executeTrade(_isCallTurn ? "CALL" : "PUT");
       _isCallTurn = !_isCallTurn;
@@ -181,8 +169,107 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showBotSettings() {
-    // نفس كود الإعدادات (ديمو/حقيقي، المبلغ، المضاعفة، الأزواج)
-    // ... (نفس الكود اللي كان بالرسالة السابقة)
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              padding: const EdgeInsets.all(20),
+              height: MediaQuery.of(context).size.height * 0.7,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
+                  const Divider(color: Colors.white24),
+                  
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
+                      Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ديمو'),
+                            selected: _isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = true),
+                          ),
+                          const SizedBox(width: 10),
+                          ChoiceChip(
+                            label: const Text('حقيقي'),
+                            selected: !_isDemoMode,
+                            onSelected: (val) => setModalState(() => _isDemoMode = false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  TextField(
+                    controller: _amountController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'قيمة الصفقة (\$)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.attach_money),
+                    ),
+                  ),
+                  SwitchListTile(
+                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
+                    value: _useMartingale,
+                    activeColor: Colors.tealAccent,
+                    onChanged: (val) => setModalState(() => _useMartingale = val),
+                  ),
+                  const Divider(color: Colors.white24),
+                  const Text('الأزواج المستهدفة:', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                  const SizedBox(height: 10),
+                  
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _targetAssets.length,
+                      itemBuilder: (context, index) {
+                        return ListTile(
+                          leading: const Icon(Icons.currency_exchange, color: Colors.tealAccent, size: 20),
+                          title: Text(_targetAssets[index], style: const TextStyle(color: Colors.white, fontSize: 14)),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
+                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
+                      onPressed: () {
+                        if (_isBotActive) {
+                          _stopBot();
+                        } else {
+                          _startBot();
+                        }
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -193,7 +280,6 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // نفس كود الواجهة
     return Scaffold(
       appBar: AppBar(
         title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
@@ -233,7 +319,7 @@ class _MainScreenState extends State<MainScreen> {
           else
             Center(
               child: Text(
-                _isBotActive ? "البوت يعمل..." : "البوت متوقف",
+                _isBotActive ? "البوت يعمل... بيدوس كل دقيقة" : "البوت متوقف",
                 style: TextStyle(fontSize: 20, color: _isBotActive ? Colors.tealAccent : Colors.white),
               ),
             ),
@@ -243,4 +329,18 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+}
+
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(FirstTaskHandler());
+}
+
+class FirstTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {}
 }
