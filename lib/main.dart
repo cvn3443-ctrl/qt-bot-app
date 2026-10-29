@@ -66,9 +66,8 @@ class _HomePageState extends State<HomePage> {
     _webController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('CandlesChannel', onMessageReceived: (msg) {
-        // لقط الشموع + Ping التشخيصي
         if (msg.message.startsWith('ping:')) {
-          _addLog('[Ping] ${msg.message}'); // نشوف إذا الـ ping وصل
+          // _addLog('[Ping] ${msg.message}'); // نشيلها عشان ما تغرق السجل
         }
       })
       ..addJavaScriptChannel('ClickResultChannel', onMessageReceived: (msg) {
@@ -77,7 +76,7 @@ class _HomePageState extends State<HomePage> {
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (url) => _webController.runJavaScript(_injectedScript),
       ))
-      ..loadRequest(Uri.parse('https://quotex.com/ar/trade')); // غيرنا للعربي
+      ..loadRequest(Uri.parse('https://quotex.com/ar/trade'));
   }
 
   static const String _injectedScript = r'''
@@ -103,7 +102,7 @@ class _HomePageState extends State<HomePage> {
   window.WebSocket = PatchedWS;
 
   window.__qtxsyClick = function(texts) {
-    const all = document.querySelectorAll('button, a, div[role="button"], div');
+    const all = document.querySelectorAll('button, a, div[role="button"], div, span');
     for (const el of all) {
       const t = (el.textContent || '').trim();
       for (const want of texts) {
@@ -113,22 +112,58 @@ class _HomePageState extends State<HomePage> {
     return false;
   };
 
-  // دالة لمعرفة وضع الحساب (ديمو/حقيقي)
+  // === دالة الكشف عن الحساب (بناءً على الرصيد) ===
   window.__qtxsyGetAccountMode = function() {
-    const el = document.querySelector('[class*="balance"], [class*="account"]');
-    const t = (el?.textContent || '').toLowerCase();
-    if (t.includes('demo') || t.includes('تجريبي') || t.includes('تدريب')) return 'demo';
-    if (t.includes('real') || t.includes('حقيقي')) return 'real';
+    // 1. نشوف إذا في قائمة مفتوحة (بتحتوي على "حساب حقيقي" و "حساب تجريبي")
+    const allElements = document.querySelectorAll('div, span');
+    let hasReal = false;
+    let hasDemo = false;
+    for (let i = 0; i < allElements.length; i++) {
+      let text = (allElements[i].textContent || '').trim();
+      if (text === 'حساب حقيقي' || text === 'Real') hasReal = true;
+      if (text === 'حساب تجريبي' || text === 'Demo') hasDemo = true;
+    }
+    
+    // 2. نقرأ الرصيد من أعلى الشاشة
+    let balanceText = "";
+    for (let i = 0; i < allElements.length; i++) {
+      let text = (allElements[i].textContent || '').trim();
+      // الرصيد عادة بكون فيه $ أو أرقام كبيرة
+      if (text.includes('$') && text.length < 20) {
+        balanceText = text;
+        break;
+      }
+    }
+    
+    // 3. نحدد نوع الحساب
+    // إذا القائمة مفتوحة، نشوف الرصيد
+    if (hasReal && hasDemo) {
+      // ديمو عادة رصيده عالي (9,000+)، حقيقي رصيده 0 أو قليل
+      if (balanceText.includes('9,') || balanceText.includes('10,') || balanceText.includes('11,')) {
+        return 'demo';
+      } else {
+        return 'real';
+      }
+    }
+    
+    // إذا القائمة مسكرة، نعتمد على الرصيد
+    if (balanceText.includes('9,') || balanceText.includes('10,') || balanceText.includes('11,')) {
+      return 'demo';
+    }
+    if (balanceText.includes('0.00') || balanceText === '' || balanceText === '$0.00') {
+      return 'real';
+    }
+    
     return 'unknown';
   };
 
-  // أداة تشخيص: تطبع الـ HTML تبع الهيدر
+  // أداة تشخيص (للتأكد)
   window.__qtxsyDumpHeader = function() {
     const header = document.querySelector('header') || document.body;
     return header.outerHTML.substring(0, 2000);
   };
 
-  // Ping التشخيصي (للتأكد إنه الجافاسكربت شغال)
+  // Ping (للتأكد إنه الجافاسكربت شغال)
   setInterval(function() {
     if (window.CandlesChannel) window.CandlesChannel.postMessage('ping:' + Date.now());
   }, 10000);
@@ -154,7 +189,6 @@ class _HomePageState extends State<HomePage> {
     ForegroundServiceController.initOptions();
   }
 
-  // ⛔ الأمان: التأكد من نوع الحساب قبل أي صفقة
   Future<bool> _confirmAccountModeMatches() async {
     final r = await _webController.runJavaScriptReturningResult('window.__qtxsyGetAccountMode()');
     final mode = r.toString().replaceAll('"', '');
@@ -163,17 +197,18 @@ class _HomePageState extends State<HomePage> {
       _addLog('⛔ إيقاف أمان: الحساب الحالي ($mode) ≠ المطلوب ($expected) — ما دخلنا الصفقة');
       return false;
     }
+    _addLog('✅ الحساب مطابق ($mode)');
     return true;
   }
 
   void _startBot() async {
     await ForegroundServiceController.start();
-    WakelockPlus.enable(); // الشاشة تضل مفتوحة
+    WakelockPlus.enable();
 
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
     });
-    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _randomTestEntry());
+    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _analyzeAndTrade());
     _logCleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) => _cleanOldLogs());
 
     setState(() => _botActive = true);
@@ -188,11 +223,11 @@ class _HomePageState extends State<HomePage> {
     setState(() => _botActive = false);
   }
 
-  void _randomTestEntry() async {
-    // 1. تأكيد الأمان أول
+  void _analyzeAndTrade() async {
+    // 1. تأكيد الأمان
     if (!await _confirmAccountModeMatches()) return;
-
-    // 2. الدوس على الزر
+    
+    // 2. الدوس العشوائي
     final allPairs = [...globalPairs, ...otcPairs];
     final pair = (allPairs..shuffle()).first;
     final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
@@ -227,9 +262,8 @@ class _HomePageState extends State<HomePage> {
     await prefs.setDouble('stake', _stake);
     await prefs.setBool('martingaleOn', _martingaleOn);
     
-    // نحاول نغير الحساب (بس الأمان فوق بيحمينا)
     _webController.runJavaScript(
-      "window.__qtxsyClick(${jsonEncode(_isDemo ? ['Demo','تجريبي','تدريب'] : ['Real','حقيقي'])});",
+      "window.__qtxsyClick(${jsonEncode(_isDemo ? ['حساب تجريبي','تجريبي','Demo'] : ['حساب حقيقي','حقيقي','Real'])});",
     );
   }
 
@@ -302,10 +336,8 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Stack(
         children: [
-          // الـ WebView دايماً موجود (ظاهر) بالخلفية
           Positioned.fill(child: WebViewWidget(controller: _webController)),
           
-          // شاشة البوت تظهر فوقه لما نختار البوت
           if (_tab == 1)
             Positioned.fill(
               child: Container(
