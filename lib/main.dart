@@ -1,273 +1,241 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'foreground_service.dart';
+import 'notification_service.dart';
 
-void main() {
+const List<String> otcPairs = [
+  'CHFJPY_otc','USDCAD_otc','EURJPY_otc','AUDCAD_otc','EURAUD_otc','AUDUSD_otc',
+  'GBPUSD_otc','EURUSD_otc','NZDUSD_otc','GBPJPY_otc',
+];
+const List<String> globalPairs = [
+  'EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF','NZDUSD','EURGBP','EURJPY','GBPJPY',
+];
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterForegroundTask.initCommunicationPort();
+  ForegroundServiceController.initCommunication(); // رخيص، ما بيعلّق شي
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QTXSY Bot',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        primaryColor: Colors.tealAccent,
-      ),
-      home: const MainScreen(),
+      title: 'QTXSY Bot',
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      home: const HomePage(),
     );
   }
 }
 
-class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
-
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
   @override
-  State<MainScreen> createState() => _MainScreenState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _MainScreenState extends State<MainScreen> {
-  late WebViewController _controller;
-  bool _isLoading = true;
-  bool _isBotActive = false;
-  bool _isDemoMode = true;
-  bool _showPlatform = true;
-
-  final TextEditingController _amountController = TextEditingController(text: "1.0");
-  bool _useMartingale = false;
-  double _currentAmount = 1.0;
-  
+class _HomePageState extends State<HomePage> {
+  int _tab = 0; // 0 = المنصة، 1 = البوت
+  late final WebViewController _webController;
+  final List<String> _log = [];
+  bool _botActive = false;
+  bool _isDemo = true;
+  double _stake = 1.0;
+  bool _martingaleOn = false;
   Timer? _tradeTimer;
-  bool _isCallTurn = true;
-
-  // قائمة الأزواج
-  final List<String> _targetAssets = [
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
-    "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-    "CHFJPY_otc", "USDCAD_otc", "EURJPY_otc", "AUDCAD_otc", "EURAUD_otc",
-    "AUDUSD_otc", "GBPUSD_otc", "EURUSD_otc", "NZDUSD_otc", "GBPJPY_otc"
-  ];
+  Timer? _heartbeatTimer;
+  Timer? _logCleanupTimer;
+  final List<DateTime> _logTimes = [];
 
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent("Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Mobile Safari/537.36")
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (String url) {
-            setState(() => _isLoading = false);
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse('https://quotex.com/ar/demo-trade'));
+    _setupWebView();
+    // الواجهة (الـWebView) بتبني فوراً بالـbuild() تحت — ما في شي بيوقفها.
+    // كل شي تاني (أذونات، خدمة خلفية، إشعارات) بيصير بعد أول frame، بدون انتظار يعطل الرندر.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initBackgroundStuff());
+  }
 
-    // تهيئة الخلفية (بعد فتح الشاشة)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _setupBackgroundStuff();
+  void _setupWebView() {
+    _webController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel('CandlesChannel', onMessageReceived: (msg) {
+        // بيوصل هون النص الخام من رسائل WebSocket — الفك/التحليل الفعلي لسا قيد التجربة
+        // (تعمدنا ما نخمن صيغة البيانات هون، أسهل تصححوها وتجربوها بـDart من بالـJS)
+      })
+      ..addJavaScriptChannel('ClickResultChannel', onMessageReceived: (msg) {
+        _addLog('نتيجة ضغط: ${msg.message}');
+      })
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageStarted: (url) => _webController.runJavaScript(_injectedScript),
+      ))
+      ..loadRequest(Uri.parse('https://quotex.com/en/trade'));
+  }
+
+  static const String _injectedScript = r'''
+(function() {
+  if (window.__qtxsyPatched) return;
+  window.__qtxsyPatched = true;
+
+  // 1) اعتراض WebSocket
+  const NativeWS = window.WebSocket;
+  function PatchedWS(url, protocols) {
+    const ws = protocols ? new NativeWS(url, protocols) : new NativeWS(url);
+    ws.binaryType = 'arraybuffer';
+    ws.addEventListener('message', function(event) {
+      try {
+        let text = (event.data instanceof ArrayBuffer)
+          ? new TextDecoder('utf-8').decode(event.data)
+          : event.data;
+        if (window.CandlesChannel) window.CandlesChannel.postMessage(text);
+      } catch (e) {}
+    });
+    return ws;
+  }
+  PatchedWS.prototype = NativeWS.prototype;
+  window.WebSocket = PatchedWS;
+
+  // 2) ضغط أزرار بالبحث عن النص
+  window.__qtxsyClick = function(texts) {
+    const all = document.querySelectorAll('button, a, div[role="button"]');
+    for (const el of all) {
+      const t = (el.textContent || '').trim();
+      for (const want of texts) {
+        if (t.includes(want)) { el.click(); return true; }
+      }
+    }
+    return false;
+  };
+})();
+''';
+
+  Future<void> _initBackgroundStuff() async {
+    await _loadSettings();
+
+    // أذونات
+    final notifStatus = await FlutterForegroundTask.checkNotificationPermission();
+    if (notifStatus != NotificationPermission.granted) {
+      await FlutterForegroundTask.requestNotificationPermission();
+    }
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+
+    // إشعارات + خدمة الخلفية
+    await NotificationService.init();
+    ForegroundServiceController.initOptions();
+    await ForegroundServiceController.start();
+
+    // المؤقتات: نبضة كل 5 دقايق + دخول تجريبي عشوائي كل دقيقة (مرحلة 1 فقط — بعدين بتنبدل بالاستراتيجيات الحقيقية)
+    _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
+    });
+    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _randomTestEntry());
+    _logCleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) => _cleanOldLogs());
+
+    setState(() => _botActive = true);
+  }
+
+  // === مرحلة 1 فقط: دخول عشوائي لتجربة الإشعارات والواجهة ===
+  // ⚠️ TODO المرحلة 2: استبدلوا جسم هالفنكشن بمنطق pickBestPair() من strategy_engine.dart
+  void _randomTestEntry() {
+    final allPairs = [...globalPairs, ...otcPairs];
+    final pair = (allPairs..shuffle()).first;
+    final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
+    final texts = direction == 'شراء' ? ['شراء', 'Buy', 'CALL'] : ['بيع', 'Sell', 'PUT'];
+    _webController.runJavaScript('window.__qtxsyClick(${jsonEncode(texts)});');
+    _addLog('[تجربة] $pair — $direction');
+    NotificationService.showTradeAlert(pair, direction);
+    ForegroundServiceController.initCommunication(); // (موجودة أصلاً، بس تأكيد)
+    FlutterForegroundTask.sendDataToTask(jsonEncode('آخر صفقة تجربة: $pair'));
+  }
+
+  void _addLog(String text) {
+    setState(() {
+      _log.insert(0, '${TimeOfDay.now().format(context)} — $text');
+      _logTimes.insert(0, DateTime.now());
     });
   }
 
-  Future<void> _setupBackgroundStuff() async {
-    final status = await FlutterForegroundTask.checkNotificationPermission();
-    if (status != NotificationPermission.granted) {
-      await FlutterForegroundTask.requestNotificationPermission();
-    }
-    
-    FlutterForegroundTask.init(
-      androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'qtxsy_service',
-        channelName: 'تشغيل البوت',
-      ),
-      iosNotificationOptions: const IOSNotificationOptions(),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(5000),
-        autoRunOnBoot: true,
-        allowWakeLock: true,
-      ),
-    );
-  }
-
-  void _clickButton(String text) {
-    _controller.runJavaScript("""
-      (function() {
-        let buttons = document.querySelectorAll('button, div[role="button"], div, span');
-        for (let i = 0; i < buttons.length; i++) {
-          let el = buttons[i];
-          if (el.innerText && el.innerText.trim() === "$text") {
-            if (el.offsetParent !== null) {
-              el.click();
-              return "Clicked";
-            }
-          }
-        }
-        return "Not Found";
-      })();
-    """);
-  }
-
-  void _executeTrade(String direction) {
-    if (!_isBotActive) return;
-    String buttonText = direction == "CALL" ? "شراء" : "بيع";
-    
-    _controller.runJavaScript("""
-      (function() {
-        let input = document.querySelector('input[type="number"]') || document.querySelector('input[inputmode="decimal"]');
-        if (input) {
-          input.value = "$_currentAmount";
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      })();
-    """);
-    
-    _clickButton(buttonText);
-    HapticFeedback.heavyImpact();
-  }
-
-  void _startBot() async {
-    setState(() => _isBotActive = true);
-    _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
-    
-    if (_isDemoMode) {
-      _clickButton("ديمو");
-    } else {
-      _clickButton("حقيقي");
-    }
-
-    await FlutterForegroundTask.startService(
-      notificationTitle: 'QTXSY Bot Active',
-      notificationText: 'البوت شغال...',
-      callback: startCallback,
-    );
-
-    _tradeTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
-      _executeTrade(_isCallTurn ? "CALL" : "PUT");
-      _isCallTurn = !_isCallTurn;
-
-      if (_useMartingale) {
-        _currentAmount *= 2.0;
-      } else {
-        _currentAmount = double.tryParse(_amountController.text) ?? 1.0;
+  void _cleanOldLogs() {
+    final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+    setState(() {
+      while (_logTimes.isNotEmpty && _logTimes.last.isBefore(cutoff)) {
+        _logTimes.removeLast();
+        _log.removeLast();
       }
     });
   }
 
-  void _stopBot() async {
-    setState(() => _isBotActive = false);
-    _tradeTimer?.cancel();
-    await FlutterForegroundTask.stopService();
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isDemo = prefs.getBool('isDemo') ?? true;
+      _stake = prefs.getDouble('stake') ?? 1.0;
+      _martingaleOn = prefs.getBool('martingaleOn') ?? false;
+    });
   }
 
-  void _showBotSettings() {
-    showModalBottomSheet(
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isDemo', _isDemo);
+    await prefs.setDouble('stake', _stake);
+    await prefs.setBool('martingaleOn', _martingaleOn);
+    // TODO: فحصوا الصفحة الحقيقية (Inspect) ولاقوا العنصر الفعلي لمفتاح ديمو/حقيقي،
+    // وبدلوه هون بدل هاد التخمين:
+    _webController.runJavaScript(
+      "window.__qtxsyClick(${jsonEncode(_isDemo ? ['Demo','تجريبي','تدريب'] : ['Real','حقيقي'])});",
+    );
+  }
+
+  void _openSettings() {
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF1E1E1E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              height: MediaQuery.of(context).size.height * 0.7,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('إعدادات البوت', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.tealAccent)),
-                  const Divider(color: Colors.white24),
-                  
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('نوع الحساب:', style: TextStyle(color: Colors.white)),
-                      Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('ديمو'),
-                            selected: _isDemoMode,
-                            onSelected: (val) => setModalState(() => _isDemoMode = true),
-                          ),
-                          const SizedBox(width: 10),
-                          ChoiceChip(
-                            label: const Text('حقيقي'),
-                            selected: !_isDemoMode,
-                            onSelected: (val) => setModalState(() => _isDemoMode = false),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  TextField(
-                    controller: _amountController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'قيمة الصفقة (\$)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.attach_money),
-                    ),
-                  ),
-                  SwitchListTile(
-                    title: const Text('تفعيل المضاعفة', style: TextStyle(color: Colors.white)),
-                    value: _useMartingale,
-                    activeColor: Colors.tealAccent,
-                    onChanged: (val) => setModalState(() => _useMartingale = val),
-                  ),
-                  const Divider(color: Colors.white24),
-                  const Text('الأزواج المستهدفة:', style: TextStyle(color: Colors.grey, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _targetAssets.length,
-                      itemBuilder: (context, index) {
-                        return ListTile(
-                          leading: const Icon(Icons.currency_exchange, color: Colors.tealAccent, size: 20),
-                          title: Text(_targetAssets[index], style: const TextStyle(color: Colors.white, fontSize: 14)),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isBotActive ? Colors.redAccent : Colors.tealAccent,
-                        foregroundColor: Colors.black,
-                      ),
-                      icon: Icon(_isBotActive ? Icons.stop : Icons.play_arrow),
-                      label: Text(_isBotActive ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
-                      onPressed: () {
-                        if (_isBotActive) {
-                          _stopBot();
-                        } else {
-                          _startBot();
-                        }
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ),
-                ],
+      builder: (ctx) {
+        bool demo = _isDemo;
+        double stake = _stake;
+        bool mart = _martingaleOn;
+        return StatefulBuilder(builder: (ctx, setD) {
+          return AlertDialog(
+            title: const Text('الإعدادات'),
+            content: Column(mainAxisSize: MainAxisSize.min, children: [
+              SwitchListTile(
+                title: Text(demo ? 'حساب: تجريبي (ديمو)' : 'حساب: حقيقي'),
+                value: demo,
+                onChanged: (v) => setD(() => demo = v),
               ),
-            );
-          },
-        );
+              TextFormField(
+                initialValue: stake.toString(),
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'قيمة الصفقة (\$)'),
+                onChanged: (v) => stake = double.tryParse(v) ?? stake,
+              ),
+              SwitchListTile(
+                title: const Text('المضاعفة'),
+                value: mart,
+                onChanged: (v) => setD(() => mart = v),
+              ),
+            ]),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+              FilledButton(
+                onPressed: () {
+                  setState(() { _isDemo = demo; _stake = stake; _martingaleOn = mart; });
+                  _saveSettings();
+                  Navigator.pop(ctx);
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          );
+        });
       },
     );
   }
@@ -275,6 +243,8 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     _tradeTimer?.cancel();
+    _heartbeatTimer?.cancel();
+    _logCleanupTimer?.cancel();
     super.dispose();
   }
 
@@ -282,65 +252,67 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('QTXSY', style: TextStyle(color: Colors.tealAccent)),
-        backgroundColor: Colors.black87,
+        title: Row(children: [
+          Expanded(child: _TabButton(label: 'المنصة', selected: _tab == 0, onTap: () => setState(() => _tab = 0))),
+          const SizedBox(width: 8),
+          Expanded(child: _TabButton(label: 'البوت', selected: _tab == 1, onTap: () => setState(() => _tab = 1))),
+        ]),
         actions: [
-          IconButton(icon: const Icon(Icons.settings, color: Colors.tealAccent), onPressed: _showBotSettings),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: () => _webController.reload()),
+          IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: Container(
-            color: Colors.black,
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextButton.icon(
-                    onPressed: () => setState(() => _showPlatform = true),
-                    icon: Icon(Icons.web, color: _showPlatform ? Colors.tealAccent : Colors.grey),
-                    label: Text('المنصة', style: TextStyle(color: _showPlatform ? Colors.tealAccent : Colors.grey)),
-                  ),
-                ),
-                Expanded(
-                  child: TextButton.icon(
-                    onPressed: () => setState(() => _showPlatform = false),
-                    icon: Icon(Icons.smart_toy, color: !_showPlatform ? Colors.tealAccent : Colors.grey),
-                    label: Text('البوت', style: TextStyle(color: !_showPlatform ? Colors.tealAccent : Colors.grey)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
-      body: Stack(
+      body: IndexedStack(
+        index: _tab,
         children: [
-          if (_showPlatform)
-            WebViewWidget(controller: _controller)
-          else
-            Center(
-              child: Text(
-                _isBotActive ? "البوت يعمل... بيدوس كل دقيقة" : "البوت متوقف",
-                style: TextStyle(fontSize: 20, color: _isBotActive ? Colors.tealAccent : Colors.white),
-              ),
-            ),
-          if (_isLoading && _showPlatform)
-            const Center(child: CircularProgressIndicator(color: Colors.tealAccent)),
+          WebViewWidget(controller: _webController), // بيبني فوراً، ما بيستنى شي
+          _BotScreen(active: _botActive, log: _log, isDemo: _isDemo, stake: _stake, martingaleOn: _martingaleOn),
         ],
       ),
     );
   }
 }
 
-@pragma('vm:entry-point')
-void startCallback() {
-  FlutterForegroundTask.setTaskHandler(FirstTaskHandler());
+class _TabButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _TabButton({required this.label, required this.selected, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: selected ? Theme.of(context).colorScheme.primaryContainer : null,
+      ),
+      child: Text(label),
+    );
+  }
 }
 
-class FirstTaskHandler extends TaskHandler {
+class _BotScreen extends StatelessWidget {
+  final bool active;
+  final List<String> log;
+  final bool isDemo;
+  final double stake;
+  final bool martingaleOn;
+  const _BotScreen({required this.active, required this.log, required this.isDemo, required this.stake, required this.martingaleOn});
+
   @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
-  @override
-  void onRepeatEvent(DateTime timestamp) {}
-  @override
-  Future<void> onDestroy(DateTime timestamp) async {}
+  Widget build(BuildContext context) {
+    return Column(children: [
+      ListTile(
+        leading: Icon(active ? Icons.check_circle : Icons.hourglass_empty, color: active ? Colors.green : Colors.orange),
+        title: Text(active ? 'البوت شغال' : 'عم يجهز...'),
+        subtitle: Text('${isDemo ? "ديمو" : "حقيقي"} — \$${stake.toStringAsFixed(2)} — مضاعفة: ${martingaleOn ? "مفعّلة" : "مطفّية"}'),
+      ),
+      const Divider(),
+      Expanded(
+        child: ListView.builder(
+          itemCount: log.length,
+          itemBuilder: (ctx, i) => ListTile(dense: true, title: Text(log[i])),
+        ),
+      ),
+    ]);
+  }
 }
