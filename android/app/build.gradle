@@ -5,38 +5,28 @@ plugins {
 }
 
 android {
-    namespace = "com.globalqtx.globalqtx"
-    compileSdk = 34
-    ndkVersion = "25.1.8937393"
+    namespace "com.qtxsy.bot"
+    compileSdk 34
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 
     defaultConfig {
-        applicationId = "com.globalqtx.globalqtx"
-        minSdk = 21
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        applicationId "com.qtxsy.bot" // إذا عندكم applicationId موجود من قبل، خلوه هو وما تبدلوه
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            signingConfig signingConfigs.debug // مؤقت للتجربة بس — لازم يتبدل بتوقيع حقيقي قبل أي نشر
         }
     }
 }
 
-flutter {
-    source = "../.."
-}
-
-dependencies {
-    implementation 'androidx.webkit:webkit:1.10.0'
-}
+flutter { source "../.." }
