@@ -66,9 +66,7 @@ class _HomePageState extends State<HomePage> {
     _webController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('CandlesChannel', onMessageReceived: (msg) {
-        if (msg.message.startsWith('ping:')) {
-          // _addLog('[Ping] ${msg.message}');
-        }
+        // نستقبل الشموع (للمرحلة الجاية)
       })
       ..addJavaScriptChannel('ClickResultChannel', onMessageReceived: (msg) {
         _addLog('نتيجة ضغط: ${msg.message}');
@@ -140,7 +138,6 @@ class _HomePageState extends State<HomePage> {
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
     });
-    // كل دقيقة، بيدوس على زوج عشوائي
     _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _randomTrade());
     _logCleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) => _cleanOldLogs());
 
@@ -157,16 +154,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _randomTrade() async {
-    // 1. نختار زوج عشوائي
     final allPairs = [...globalPairs, ...otcPairs];
     final pair = (allPairs..shuffle()).first;
     final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
     final texts = direction == 'شراء' ? ['شراء', 'Buy', 'CALL'] : ['بيع', 'Sell', 'PUT'];
 
-    // 2. ندوس على الزر
     _webController.runJavaScript('window.__qtxsyClick(${jsonEncode(texts)});');
-    
-    // 3. نسجل ونبعت إشعار
     _addLog('[تجربة] $pair — $direction');
     NotificationService.showTradeAlert(pair, direction);
     FlutterForegroundTask.sendDataToTask(jsonEncode('آخر صفقة: $pair'));
@@ -259,6 +252,26 @@ class _HomePageState extends State<HomePage> {
           Expanded(child: _TabButton(label: 'البوت', selected: _tab == 1, onTap: () => setState(() => _tab = 1))),
         ]),
         actions: [
+          // زر فحص الأزرار
+          IconButton(
+            icon: const Icon(Icons.search, color: Colors.orange),
+            onPressed: () async {
+              final buttons = await _webController.runJavaScriptReturningResult('''
+                (function() {
+                  let btns = document.querySelectorAll('button, div[role="button"], div, span');
+                  let res = [];
+                  for (let i = 0; i < btns.length; i++) {
+                    let t = (btns[i].textContent || '').trim();
+                    if (t.length > 0 && t.length < 20) {
+                      res.push(t);
+                    }
+                  }
+                  return JSON.stringify([...new Set(res)]);
+                })();
+              ''');
+              _addLog('أزرار: $buttons');
+            },
+          ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: () => _webController.reload()),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
