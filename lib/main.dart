@@ -18,7 +18,7 @@ const List<String> globalPairs = [
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  ForegroundServiceController.initCommunication(); // رخيص، ما بيعلّق شي
+  ForegroundServiceController.initCommunication();
   runApp(const MyApp());
 }
 
@@ -58,17 +58,14 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _setupWebView();
-    // الواجهة (الـWebView) بتبني فوراً بالـbuild() تحت — ما في شي بيوقفها.
-    // كل شي تاني (أذونات، خدمة خلفية، إشعارات) بيصير بعد أول frame، بدون انتظار يعطل الرندر.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initBackgroundStuff());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSettings());
   }
 
   void _setupWebView() {
     _webController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('CandlesChannel', onMessageReceived: (msg) {
-        // بيوصل هون النص الخام من رسائل WebSocket — الفك/التحليل الفعلي لسا قيد التجربة
-        // (تعمدنا ما نخمن صيغة البيانات هون، أسهل تصححوها وتجربوها بـDart من بالـJS)
+        // لقط الشموع (للمرحلة 2)
       })
       ..addJavaScriptChannel('ClickResultChannel', onMessageReceived: (msg) {
         _addLog('نتيجة ضغط: ${msg.message}');
@@ -76,15 +73,13 @@ class _HomePageState extends State<HomePage> {
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (url) => _webController.runJavaScript(_injectedScript),
       ))
-      ..loadRequest(Uri.parse('https://quotex.com/en/trade'));
+      ..loadRequest(Uri.parse('https://quotex.com/en/trade')); // إنجليزي مؤقتاً
   }
 
   static const String _injectedScript = r'''
 (function() {
   if (window.__qtxsyPatched) return;
   window.__qtxsyPatched = true;
-
-  // 1) اعتراض WebSocket
   const NativeWS = window.WebSocket;
   function PatchedWS(url, protocols) {
     const ws = protocols ? new NativeWS(url, protocols) : new NativeWS(url);
@@ -102,7 +97,6 @@ class _HomePageState extends State<HomePage> {
   PatchedWS.prototype = NativeWS.prototype;
   window.WebSocket = PatchedWS;
 
-  // 2) ضغط أزرار بالبحث عن النص
   window.__qtxsyClick = function(texts) {
     const all = document.querySelectorAll('button, a, div[role="button"]');
     for (const el of all) {
@@ -116,10 +110,14 @@ class _HomePageState extends State<HomePage> {
 })();
 ''';
 
-  Future<void> _initBackgroundStuff() async {
-    await _loadSettings();
-
-    // أذونات
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isDemo = prefs.getBool('isDemo') ?? true;
+      _stake = prefs.getDouble('stake') ?? 1.0;
+      _martingaleOn = prefs.getBool('martingaleOn') ?? false;
+    });
+    // طلب إذن الإشعارات
     final notifStatus = await FlutterForegroundTask.checkNotificationPermission();
     if (notifStatus != NotificationPermission.granted) {
       await FlutterForegroundTask.requestNotificationPermission();
@@ -127,13 +125,14 @@ class _HomePageState extends State<HomePage> {
     if (await Permission.notification.isDenied) {
       await Permission.notification.request();
     }
-
-    // إشعارات + خدمة الخلفية
     await NotificationService.init();
     ForegroundServiceController.initOptions();
-    await ForegroundServiceController.start();
+  }
 
-    // المؤقتات: نبضة كل 5 دقايق + دخول تجريبي عشوائي كل دقيقة (مرحلة 1 فقط — بعدين بتنبدل بالاستراتيجيات الحقيقية)
+  void _startBot() async {
+    await ForegroundServiceController.start();
+    
+    // المؤقتات: نبضة كل 5 دقايق + دخول تجريبي عشوائي كل دقيقة
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
     });
@@ -143,8 +142,14 @@ class _HomePageState extends State<HomePage> {
     setState(() => _botActive = true);
   }
 
-  // === مرحلة 1 فقط: دخول عشوائي لتجربة الإشعارات والواجهة ===
-  // ⚠️ TODO المرحلة 2: استبدلوا جسم هالفنكشن بمنطق pickBestPair() من strategy_engine.dart
+  void _stopBot() async {
+    _tradeTimer?.cancel();
+    _heartbeatTimer?.cancel();
+    _logCleanupTimer?.cancel();
+    await ForegroundServiceController.stop();
+    setState(() => _botActive = false);
+  }
+
   void _randomTestEntry() {
     final allPairs = [...globalPairs, ...otcPairs];
     final pair = (allPairs..shuffle()).first;
@@ -153,8 +158,7 @@ class _HomePageState extends State<HomePage> {
     _webController.runJavaScript('window.__qtxsyClick(${jsonEncode(texts)});');
     _addLog('[تجربة] $pair — $direction');
     NotificationService.showTradeAlert(pair, direction);
-    ForegroundServiceController.initCommunication(); // (موجودة أصلاً، بس تأكيد)
-    FlutterForegroundTask.sendDataToTask(jsonEncode('آخر صفقة تجربة: $pair'));
+    FlutterForegroundTask.sendDataToTask(jsonEncode('آخر صفقة: $pair'));
   }
 
   void _addLog(String text) {
@@ -174,22 +178,11 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isDemo = prefs.getBool('isDemo') ?? true;
-      _stake = prefs.getDouble('stake') ?? 1.0;
-      _martingaleOn = prefs.getBool('martingaleOn') ?? false;
-    });
-  }
-
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isDemo', _isDemo);
     await prefs.setDouble('stake', _stake);
     await prefs.setBool('martingaleOn', _martingaleOn);
-    // TODO: فحصوا الصفحة الحقيقية (Inspect) ولاقوا العنصر الفعلي لمفتاح ديمو/حقيقي،
-    // وبدلوه هون بدل هاد التخمين:
     _webController.runJavaScript(
       "window.__qtxsyClick(${jsonEncode(_isDemo ? ['Demo','تجريبي','تدريب'] : ['Real','حقيقي'])});",
     );
@@ -265,8 +258,16 @@ class _HomePageState extends State<HomePage> {
       body: IndexedStack(
         index: _tab,
         children: [
-          WebViewWidget(controller: _webController), // بيبني فوراً، ما بيستنى شي
-          _BotScreen(active: _botActive, log: _log, isDemo: _isDemo, stake: _stake, martingaleOn: _martingaleOn),
+          WebViewWidget(controller: _webController),
+          _BotScreen(
+            active: _botActive,
+            log: _log,
+            isDemo: _isDemo,
+            stake: _stake,
+            martingaleOn: _martingaleOn,
+            onStart: _startBot,
+            onStop: _stopBot,
+          ),
         ],
       ),
     );
@@ -296,15 +297,41 @@ class _BotScreen extends StatelessWidget {
   final bool isDemo;
   final double stake;
   final bool martingaleOn;
-  const _BotScreen({required this.active, required this.log, required this.isDemo, required this.stake, required this.martingaleOn});
+  final VoidCallback onStart;
+  final VoidCallback onStop;
+  const _BotScreen({
+    required this.active,
+    required this.log,
+    required this.isDemo,
+    required this.stake,
+    required this.martingaleOn,
+    required this.onStart,
+    required this.onStop,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(children: [
       ListTile(
         leading: Icon(active ? Icons.check_circle : Icons.hourglass_empty, color: active ? Colors.green : Colors.orange),
-        title: Text(active ? 'البوت شغال' : 'عم يجهز...'),
+        title: Text(active ? 'البوت شغال' : 'البوت متوقف'),
         subtitle: Text('${isDemo ? "ديمو" : "حقيقي"} — \$${stake.toStringAsFixed(2)} — مضاعفة: ${martingaleOn ? "مفعّلة" : "مطفّية"}'),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        child: SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: active ? Colors.redAccent : Colors.tealAccent,
+              foregroundColor: Colors.black,
+            ),
+            icon: Icon(active ? Icons.stop : Icons.play_arrow),
+            label: Text(active ? 'إيقاف البوت' : 'تنشيط البوت', style: const TextStyle(fontSize: 18)),
+            onPressed: active ? onStop : onStart,
+          ),
+        ),
       ),
       const Divider(),
       Expanded(
