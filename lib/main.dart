@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'foreground_service.dart';
 import 'notification_service.dart';
 
@@ -42,7 +43,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _tab = 0; // 0 = المنصة، 1 = البوت
+  int _tab = 0;
   late final WebViewController _webController;
   final List<String> _log = [];
   bool _botActive = false;
@@ -65,7 +66,10 @@ class _HomePageState extends State<HomePage> {
     _webController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('CandlesChannel', onMessageReceived: (msg) {
-        // لقط الشموع (للمرحلة 2)
+        // لقط الشموع + Ping التشخيصي
+        if (msg.message.startsWith('ping:')) {
+          _addLog('[Ping] ${msg.message}'); // نشوف إذا الـ ping وصل
+        }
       })
       ..addJavaScriptChannel('ClickResultChannel', onMessageReceived: (msg) {
         _addLog('نتيجة ضغط: ${msg.message}');
@@ -73,13 +77,14 @@ class _HomePageState extends State<HomePage> {
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (url) => _webController.runJavaScript(_injectedScript),
       ))
-      ..loadRequest(Uri.parse('https://quotex.com/en/trade')); // إنجليزي مؤقتاً
+      ..loadRequest(Uri.parse('https://quotex.com/ar/trade')); // غيرنا للعربي
   }
 
   static const String _injectedScript = r'''
 (function() {
   if (window.__qtxsyPatched) return;
   window.__qtxsyPatched = true;
+
   const NativeWS = window.WebSocket;
   function PatchedWS(url, protocols) {
     const ws = protocols ? new NativeWS(url, protocols) : new NativeWS(url);
@@ -98,7 +103,7 @@ class _HomePageState extends State<HomePage> {
   window.WebSocket = PatchedWS;
 
   window.__qtxsyClick = function(texts) {
-    const all = document.querySelectorAll('button, a, div[role="button"]');
+    const all = document.querySelectorAll('button, a, div[role="button"], div');
     for (const el of all) {
       const t = (el.textContent || '').trim();
       for (const want of texts) {
@@ -107,6 +112,26 @@ class _HomePageState extends State<HomePage> {
     }
     return false;
   };
+
+  // دالة لمعرفة وضع الحساب (ديمو/حقيقي)
+  window.__qtxsyGetAccountMode = function() {
+    const el = document.querySelector('[class*="balance"], [class*="account"]');
+    const t = (el?.textContent || '').toLowerCase();
+    if (t.includes('demo') || t.includes('تجريبي') || t.includes('تدريب')) return 'demo';
+    if (t.includes('real') || t.includes('حقيقي')) return 'real';
+    return 'unknown';
+  };
+
+  // أداة تشخيص: تطبع الـ HTML تبع الهيدر
+  window.__qtxsyDumpHeader = function() {
+    const header = document.querySelector('header') || document.body;
+    return header.outerHTML.substring(0, 2000);
+  };
+
+  // Ping التشخيصي (للتأكد إنه الجافاسكربت شغال)
+  setInterval(function() {
+    if (window.CandlesChannel) window.CandlesChannel.postMessage('ping:' + Date.now());
+  }, 10000);
 })();
 ''';
 
@@ -117,7 +142,7 @@ class _HomePageState extends State<HomePage> {
       _stake = prefs.getDouble('stake') ?? 1.0;
       _martingaleOn = prefs.getBool('martingaleOn') ?? false;
     });
-    // طلب إذن الإشعارات
+
     final notifStatus = await FlutterForegroundTask.checkNotificationPermission();
     if (notifStatus != NotificationPermission.granted) {
       await FlutterForegroundTask.requestNotificationPermission();
@@ -129,10 +154,22 @@ class _HomePageState extends State<HomePage> {
     ForegroundServiceController.initOptions();
   }
 
+  // ⛔ الأمان: التأكد من نوع الحساب قبل أي صفقة
+  Future<bool> _confirmAccountModeMatches() async {
+    final r = await _webController.runJavaScriptReturningResult('window.__qtxsyGetAccountMode()');
+    final mode = r.toString().replaceAll('"', '');
+    final expected = _isDemo ? 'demo' : 'real';
+    if (mode != expected) {
+      _addLog('⛔ إيقاف أمان: الحساب الحالي ($mode) ≠ المطلوب ($expected) — ما دخلنا الصفقة');
+      return false;
+    }
+    return true;
+  }
+
   void _startBot() async {
     await ForegroundServiceController.start();
-    
-    // المؤقتات: نبضة كل 5 دقايق + دخول تجريبي عشوائي كل دقيقة
+    WakelockPlus.enable(); // الشاشة تضل مفتوحة
+
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
     });
@@ -147,14 +184,20 @@ class _HomePageState extends State<HomePage> {
     _heartbeatTimer?.cancel();
     _logCleanupTimer?.cancel();
     await ForegroundServiceController.stop();
+    WakelockPlus.disable();
     setState(() => _botActive = false);
   }
 
-  void _randomTestEntry() {
+  void _randomTestEntry() async {
+    // 1. تأكيد الأمان أول
+    if (!await _confirmAccountModeMatches()) return;
+
+    // 2. الدوس على الزر
     final allPairs = [...globalPairs, ...otcPairs];
     final pair = (allPairs..shuffle()).first;
     final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
     final texts = direction == 'شراء' ? ['شراء', 'Buy', 'CALL'] : ['بيع', 'Sell', 'PUT'];
+    
     _webController.runJavaScript('window.__qtxsyClick(${jsonEncode(texts)});');
     _addLog('[تجربة] $pair — $direction');
     NotificationService.showTradeAlert(pair, direction);
@@ -183,6 +226,8 @@ class _HomePageState extends State<HomePage> {
     await prefs.setBool('isDemo', _isDemo);
     await prefs.setDouble('stake', _stake);
     await prefs.setBool('martingaleOn', _martingaleOn);
+    
+    // نحاول نغير الحساب (بس الأمان فوق بيحمينا)
     _webController.runJavaScript(
       "window.__qtxsyClick(${jsonEncode(_isDemo ? ['Demo','تجريبي','تدريب'] : ['Real','حقيقي'])});",
     );
@@ -255,19 +300,27 @@ class _HomePageState extends State<HomePage> {
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
       ),
-      body: IndexedStack(
-        index: _tab,
+      body: Stack(
         children: [
-          WebViewWidget(controller: _webController),
-          _BotScreen(
-            active: _botActive,
-            log: _log,
-            isDemo: _isDemo,
-            stake: _stake,
-            martingaleOn: _martingaleOn,
-            onStart: _startBot,
-            onStop: _stopBot,
-          ),
+          // الـ WebView دايماً موجود (ظاهر) بالخلفية
+          Positioned.fill(child: WebViewWidget(controller: _webController)),
+          
+          // شاشة البوت تظهر فوقه لما نختار البوت
+          if (_tab == 1)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.9),
+                child: _BotScreen(
+                  active: _botActive,
+                  log: _log,
+                  isDemo: _isDemo,
+                  stake: _stake,
+                  martingaleOn: _martingaleOn,
+                  onStart: _startBot,
+                  onStop: _stopBot,
+                ),
+              ),
+            ),
         ],
       ),
     );
