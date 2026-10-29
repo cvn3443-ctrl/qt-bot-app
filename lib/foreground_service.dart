@@ -24,7 +24,7 @@ class BotTaskHandler extends TaskHandler {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+  Future<void> onDestroy(DateTime timestamp) async {}
 }
 
 class ForegroundServiceController {
@@ -57,8 +57,6 @@ class ForegroundServiceController {
       notificationText: 'عم يراقب السوق...',
       callback: startCallback,
     );
-    // ⚠️ ما قدرت أتأكد بالتوثيق شو بالضبط شكل نتيجة النجاح/الفشل (ServiceRequestResult) —
-    // لو صار Crash هون بالذات، اطبعوا result وابعتولي شو طلع بالضبط.
     print('startService result: $result');
   }
 
