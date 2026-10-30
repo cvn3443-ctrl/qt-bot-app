@@ -13,9 +13,7 @@ const List<String> otcPairs = [
   'CHFJPY_otc','USDCAD_otc','EURJPY_otc','AUDCAD_otc','EURAUD_otc','AUDUSD_otc',
   'GBPUSD_otc','EURUSD_otc','NZDUSD_otc','GBPJPY_otc',
 ];
-const List<String> globalPairs = [
-  'EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF','NZDUSD','EURGBP','EURJPY','GBPJPY',
-];
+// شلنا الأزواج العالمية مؤقتاً لأن السوق مسكر
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,7 +41,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _tab = 0; // 0 = المنصة، 1 = البوت
+  int _tab = 0;
   late final WebViewController _webController;
   final List<String> _log = [];
   bool _botActive = false;
@@ -133,11 +131,10 @@ class _HomePageState extends State<HomePage> {
     await ForegroundServiceController.start();
     WakelockPlus.enable();
 
-    // نروح لشاشة المنصة عشان الـ WebView يشتغل
     setState(() => _tab = 0);
 
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (_) {
-      NotificationService.showHeartbeat('عم يراقب ${otcPairs.length + globalPairs.length} زوج...');
+      NotificationService.showHeartbeat('عم يراقب ${otcPairs.length} زوج...');
     });
     _tradeTimer = Timer.periodic(const Duration(minutes: 1), (_) => _randomTrade());
     _logCleanupTimer = Timer.periodic(const Duration(minutes: 5), (_) => _cleanOldLogs());
@@ -155,8 +152,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _randomTrade() async {
-    final allPairs = [...globalPairs, ...otcPairs];
-    final pair = (allPairs..shuffle()).first;
+    // نختار من OTC بس عشان السوق العالمي مسكر
+    final pair = (otcPairs..shuffle()).first;
     final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
     final texts = direction == 'شراء' ? ['شراء', 'Buy', 'CALL'] : ['بيع', 'Sell', 'PUT'];
 
@@ -252,6 +249,26 @@ class _HomePageState extends State<HomePage> {
           Expanded(child: _TabButton(label: 'البوت', selected: _tab == 1, onTap: () => setState(() => _tab = 1))),
         ]),
         actions: [
+          // زر البحث رجعناه
+          IconButton(
+            icon: const Icon(Icons.search, color: Colors.orange),
+            onPressed: () async {
+              final buttons = await _webController.runJavaScriptReturningResult('''
+                (function() {
+                  let btns = document.querySelectorAll('button, div[role="button"], div, span');
+                  let res = [];
+                  for (let i = 0; i < btns.length; i++) {
+                    let t = (btns[i].textContent || '').trim();
+                    if (t.length > 0 && t.length < 20) {
+                      res.push(t);
+                    }
+                  }
+                  return JSON.stringify([...new Set(res)]);
+                })();
+              ''');
+              _addLog('أزرار: $buttons');
+            },
+          ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: () => _webController.reload()),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
