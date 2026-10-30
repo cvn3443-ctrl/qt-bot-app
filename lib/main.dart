@@ -13,7 +13,6 @@ const List<String> otcPairs = [
   'CHFJPY_otc','USDCAD_otc','EURJPY_otc','AUDCAD_otc','EURAUD_otc','AUDUSD_otc',
   'GBPUSD_otc','EURUSD_otc','NZDUSD_otc','GBPJPY_otc',
 ];
-// شلنا الأزواج العالمية مؤقتاً لأن السوق مسكر
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -96,11 +95,17 @@ class _HomePageState extends State<HomePage> {
   window.WebSocket = PatchedWS;
 
   window.__qtxsyClick = function(texts) {
-    const all = document.querySelectorAll('button, a, div[role="button"], div, span');
-    for (const el of all) {
+    const allElements = document.querySelectorAll('button, div[role="button"], a, div, span');
+    for (const el of allElements) {
       const t = (el.textContent || '').trim();
       for (const want of texts) {
-        if (t.includes(want)) { el.click(); return true; }
+        if (t === want || t.includes(want)) {
+          // نتأكد إنه العنصر ظاهر على الشاشة
+          if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+            el.click();
+            return true;
+          }
+        }
       }
     }
     return false;
@@ -152,10 +157,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _randomTrade() async {
-    // نختار من OTC بس عشان السوق العالمي مسكر
     final pair = (otcPairs..shuffle()).first;
     final direction = DateTime.now().second.isEven ? 'شراء' : 'بيع';
     final texts = direction == 'شراء' ? ['شراء', 'Buy', 'CALL'] : ['بيع', 'Sell', 'PUT'];
+
+    // تأخير بسيط عشان نضمن إنه الشاشة جاهزة
+    await Future.delayed(const Duration(seconds: 2));
 
     _webController.runJavaScript('window.__qtxsyClick(${jsonEncode(texts)});');
     _addLog('[تجربة] $pair — $direction');
@@ -249,26 +256,6 @@ class _HomePageState extends State<HomePage> {
           Expanded(child: _TabButton(label: 'البوت', selected: _tab == 1, onTap: () => setState(() => _tab = 1))),
         ]),
         actions: [
-          // زر البحث رجعناه
-          IconButton(
-            icon: const Icon(Icons.search, color: Colors.orange),
-            onPressed: () async {
-              final buttons = await _webController.runJavaScriptReturningResult('''
-                (function() {
-                  let btns = document.querySelectorAll('button, div[role="button"], div, span');
-                  let res = [];
-                  for (let i = 0; i < btns.length; i++) {
-                    let t = (btns[i].textContent || '').trim();
-                    if (t.length > 0 && t.length < 20) {
-                      res.push(t);
-                    }
-                  }
-                  return JSON.stringify([...new Set(res)]);
-                })();
-              ''');
-              _addLog('أزرار: $buttons');
-            },
-          ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: () => _webController.reload()),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
